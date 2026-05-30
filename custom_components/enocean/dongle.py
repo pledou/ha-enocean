@@ -508,14 +508,15 @@ class EnOceanDongle:
             with contextlib.suppress(TypeError, ValueError):
                 action = int(packet.data[1])
 
-        # Common rocker button actions (F6-02-01 / style 2)
-        if action in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
-            return (0x02, 0x01)
-
         # Window handle action families use nibble values 4/5/6/7
+        # Check this FIRST as it's more specific than rocker actions
         action_nibble = (action & 0x70) >> 4
         if action_nibble in {0x04, 0x05, 0x06, 0x07}:
             return (0x10, 0x00)
+
+        # Common rocker button actions (F6-02-01 / style 2)
+        if action in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
+            return (0x02, 0x01)
 
         # Unknown RPS subtype: keep generic FUNC/TYPE to allow fallback mapping
         return (0x00, 0x00)
