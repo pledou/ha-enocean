@@ -591,8 +591,10 @@ class EnOceanDongle:
                                     self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
                                 )
                             )
-                        # For non-UTE learning packets (RPS), continue to normal processing
-                        # instead of returning - this allows entities to receive updates
+                            # New device discovered - return to avoid processing before entities exist
+                            return
+                        # For known RPS devices, continue to normal processing
+                        # to allow entities to receive updates
                     else:
                         # Non-RPS, non-UTE packet during learning mode - ignore
                         return
