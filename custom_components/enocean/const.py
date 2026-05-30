@@ -20,6 +20,7 @@ LOGGER = logging.getLogger(__package__)
 PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.EVENT,
     Platform.LIGHT,
     Platform.NUMBER,
     Platform.SELECT,

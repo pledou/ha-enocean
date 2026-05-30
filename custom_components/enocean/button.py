@@ -13,26 +13,6 @@ from .types import EEPEntityDef
 
 EVENT_BUTTON_PRESSED = "button_pressed"
 
-RPS_ACTION_BY_NAME = {
-    "R1_AI": 0x70,
-    "R1_AO": 0x50,
-    "R1_BI": 0x30,
-    "R1_BO": 0x10,
-    "R2_AI": 0x37,
-    "R2_AO": 0x15,
-    "R2_BI": 0x00,
-    "R2_BO": 0x20,
-}
-
-RPS_WHICH_ONOFF_BY_ACTION = {
-    0x70: (0, 0),
-    0x50: (0, 1),
-    0x30: (1, 0),
-    0x10: (1, 1),
-    0x37: (10, 0),
-    0x15: (10, 1),
-}
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -79,27 +59,20 @@ async def async_setup_entry(
                 description = ent.description or (
                     f"Button {channel}" if channel is not None else None
                 )
-                rps_action = RPS_ACTION_BY_NAME.get(ent.data_field)
             else:
                 channel = getattr(ent, "offset", None)
                 description = getattr(ent, "description", None) or (
                     f"Button {channel}" if channel is not None else None
                 )
-                rps_action = None
 
-            if channel is None and rps_action is None:
+            if channel is None:
                 return None
 
             try:
-                normalized_channel = (
-                    int(channel)
-                    if channel is not None
-                    else int(rps_action) if rps_action is not None else 0
-                )
+                normalized_channel = int(channel)
                 return {
                     "channel": normalized_channel,
                     "button_name": description,
-                    "rps_action": rps_action,
                 }
             except (TypeError, ValueError):
                 return None
@@ -133,7 +106,6 @@ class EnOceanButton(EnOceanEntity, ButtonEntity):
         dev_name: str,
         channel: int,
         button_name: str,
-        rps_action: int | None = None,
         fields: EEPEntityDef | None = None,
     ) -> None:
         """Initialize the EnOcean button device."""
@@ -145,7 +117,6 @@ class EnOceanButton(EnOceanEntity, ButtonEntity):
             fields=fields,
         )
         self.channel = channel
-        self._rps_action = rps_action
         self._button_name = button_name
         self._attr_name = f"{dev_name} {button_name}"
 
@@ -173,7 +144,6 @@ class DynamicEnOceanButton(DynamicEnoceanEntity, EnOceanButton):
         rorg: int,
         rorg_func: int,
         rorg_type: int,
-        rps_action: int | None = None,
         fields: EEPEntityDef | None = None,
     ) -> None:
         """Initialize the dynamic EnOcean button device."""
@@ -189,44 +159,17 @@ class DynamicEnOceanButton(DynamicEnoceanEntity, EnOceanButton):
         )
         # Initialize button-specific attributes
         self.channel = channel
-        self._rps_action = rps_action
         self._button_name = button_name
         self._attr_name = f"{dev_name} {button_name}"
 
     @callback
     def value_changed(self, packet) -> None:
-        """Emit stateless button events for matching incoming RPS actions."""
-        if self._rps_action is None:
-            return
-
-        # RPS action byte is packet.data[1], EB state is packet.data[6].
-        if (
-            not hasattr(packet, "rorg")
-            or packet.rorg != 0xF6
-            or not hasattr(packet, "data")
-            or len(packet.data) < 7
-        ):
-            return
-
-        action = packet.data[1]
-        if action != self._rps_action:
-            return
-
-        # Emit only on press telegrams to avoid duplicate release events.
-        if packet.data[6] != 0x30:
-            return
-
-        payload = {
-            "id": self.dev_id,
-            "pushed": 1,
-            "action": self._button_name,
-        }
-        if action in RPS_WHICH_ONOFF_BY_ACTION:
-            which, onoff = RPS_WHICH_ONOFF_BY_ACTION[action]
-            payload["which"] = which
-            payload["onoff"] = onoff
-
-        self.hass.bus.fire(EVENT_BUTTON_PRESSED, payload)
+        """Handle value changes for button entity.
+        
+        Note: F6 RPS profiles are now handled by event platform.
+        This method is kept for potential non-F6 button implementations.
+        """
+        pass
 
 
 class CommandTemplateButton(DynamicEnoceanEntity, ButtonEntity):

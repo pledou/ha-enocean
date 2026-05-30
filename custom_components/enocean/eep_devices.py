@@ -32,40 +32,41 @@ from .types import EEPEntityDef, EepProfile, EntityType
 
 _LOGGER = logging.getLogger(__name__)
 
-RPS_GENERIC_BUTTON_ACTIONS: dict[str, int] = {
-    "R1_AI": 0x70,
-    "R1_AO": 0x50,
-    "R1_BI": 0x30,
-    "R1_BO": 0x10,
-    "R2_AI": 0x37,
-    "R2_AO": 0x15,
-    "R2_BI": 0x00,
-    "R2_BO": 0x20,
-}
 
-
-def _build_generic_rps_button_entities(
-    rorg: int, rorg_func: int, rorg_type: int
-) -> list[EEPEntityDef]:
-    """Build generic button entities for stateless RPS profiles.
-
-    These entities are used when no explicit EEP mapping is available for
-    a learned F6 profile. Channels are encoded as action byte values and
-    consumed by the button platform.
+def _convert_rps_to_events(entities: list[EEPEntityDef]) -> list[EEPEntityDef]:
+    """Convert RPS enum fields to event entities with proper event types.
+    
+    For F6 profiles, enum fields like R1, R2, WIN, PB define button actions.
+    Convert these to event entities where enum_items become event_types.
+    Skip auxiliary fields like EB (Energy bow) and SA (2nd action) which are flags.
     """
-    return [
-        EEPEntityDef(
-            description=name,
-            rorg=rorg,
-            rorg_func=rorg_func,
-            rorg_type=rorg_type,
-            data_field=name,
-            entity_type=EntityType.BUTTON,
-            icon="mdi:gesture-tap-button",
-            offset=action,
-        )
-        for name, action in RPS_GENERIC_BUTTON_ACTIONS.items()
-    ]
+    # Auxiliary fields that should not be event entities
+    SKIP_FIELDS = {"EB", "SA", "T21", "NU"}
+    
+    event_entities = []
+    
+    for entity in entities:
+        # For F6 RPS profiles, convert enum fields to events (except auxiliary fields)
+        if entity.rorg == 0xF6 and entity.enum_items and entity.data_field not in SKIP_FIELDS:
+            # Create an event entity with enum descriptions as event types
+            event_types = [item["description"] for item in entity.enum_items]
+            if event_types:
+                event_entities.append(
+                    EEPEntityDef(
+                        description=f"{entity.description} events",
+                        rorg=entity.rorg,
+                        rorg_func=entity.rorg_func,
+                        rorg_type=entity.rorg_type,
+                        data_field=entity.data_field,
+                        entity_type=EntityType.EVENT,
+                        icon="mdi:gesture-tap-button",
+                        enum_options=event_types,
+                        enum_items=entity.enum_items,
+                        offset=entity.offset,
+                    )
+                )
+    
+    return event_entities if event_entities else entities
 
 
 @cache
@@ -600,14 +601,6 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
     # Load EEP profile (source of truth)
     profile = _load_eep_profile(eep_profile)
     if not profile:
-        if rorg == 0xF6:
-            _LOGGER.warning(
-                "No EEP profile found for learned RPS profile RORG=%s FUNC=%s TYPE=%s, using generic stateless button mapping",
-                hex(rorg),
-                hex(rorg_func),
-                hex(rorg_type),
-            )
-            return _build_generic_rps_button_entities(rorg, rorg_func, rorg_type)
         _LOGGER.warning(
             "No EEP profile found for RORG=%s FUNC=%s TYPE=%s",
             hex(rorg),
@@ -618,14 +611,6 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
 
     eep_fields = _extract_eep_fields(profile, rorg, rorg_func, rorg_type)
     if not eep_fields:
-        if rorg == 0xF6:
-            _LOGGER.warning(
-                "EEP profile has no fields for learned RPS profile RORG=%s FUNC=%s TYPE=%s, using generic stateless button mapping",
-                hex(rorg),
-                hex(rorg_func),
-                hex(rorg_type),
-            )
-            return _build_generic_rps_button_entities(rorg, rorg_func, rorg_type)
         _LOGGER.warning(
             "EEP profile has no fields for RORG=%s FUNC=%s TYPE=%s",
             hex(rorg),
@@ -650,14 +635,9 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
                     entities, type_entry, rorg, rorg_func, rorg_type
                 )
 
-    if rorg == 0xF6 and not mapping_applied:
-        _LOGGER.warning(
-            "No explicit mapping for learned RPS profile RORG=%s FUNC=%s TYPE=%s; using generic stateless button mapping",
-            hex(rorg),
-            hex(rorg_func),
-            hex(rorg_type),
-        )
-        entities = _build_generic_rps_button_entities(rorg, rorg_func, rorg_type)
+    # For F6 RPS profiles, convert enum fields to event entities
+    if rorg == 0xF6:
+        entities = _convert_rps_to_events(entities)
 
     _LOGGER.debug(
         "Built %d entities from EEP profile with mapping overrides (RORG=%s FUNC=%s TYPE=%s)",
