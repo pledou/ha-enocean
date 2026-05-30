@@ -232,6 +232,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
                 rorg_func,
                 rorg_type,
             )
+        elif not entities:
+            _LOGGER.warning(
+                "Learned profile for device %s has no entity mapping (rorg=0x%02x func=0x%02x type=0x%02x)",
+                format_device_id_hex(device_id),
+                rorg,
+                rorg_func,
+                rorg_type,
+            )
         entities.append(
             EEPEntityDef(
                 description="Signal strength",

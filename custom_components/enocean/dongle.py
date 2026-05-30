@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+import contextlib
 import glob
 import logging
 from os.path import basename, normpath
@@ -480,6 +481,29 @@ class EnOceanDongle:
         """Send a command through the EnOcean dongle."""
         self._communicator.send(command)
 
+    def _infer_rps_teach_in_profile(self, packet) -> tuple[int, int]:
+        """Infer a likely FUNC/TYPE pair for RPS teach-in without UTE.
+
+        Stateless buttons may not emit UTE telegrams. During learning mode,
+        infer a practical profile from the action byte so pairing can proceed.
+        """
+        action = 0
+        if hasattr(packet, "data") and len(packet.data) > 1:
+            with contextlib.suppress(TypeError, ValueError):
+                action = int(packet.data[1])
+
+        # Common rocker button actions (F6-02-01 / style 2)
+        if action in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
+            return (0x02, 0x01)
+
+        # Window handle action families use nibble values 4/5/6/7
+        action_nibble = (action & 0x70) >> 4
+        if action_nibble in {0x04, 0x05, 0x06, 0x07}:
+            return (0x10, 0x00)
+
+        # Unknown RPS subtype: keep generic FUNC/TYPE to allow fallback mapping
+        return (0x00, 0x00)
+
     def callback(self, packet):
         """Handle EnOcean device's callback.
 
@@ -509,6 +533,46 @@ class EnOceanDongle:
             # the registered profile is available to listeners.
             if self._communicator.teach_in:
                 if packet.rorg != RORG.UTE:
+                    if packet.rorg == RORG.RPS:
+                        # If the device is already paired with entities, ignore
+                        # pairing-mode RPS frames to avoid duplicate discovery.
+                        if self.has_device_entities(device_id):
+                            _LOGGER.debug(
+                                "Learning mode: ignoring RPS teach-in frame from already known device %s",
+                                format_device_id_hex(device_id),
+                            )
+                            return
+
+                        inferred_func, inferred_type = self._infer_rps_teach_in_profile(
+                            packet
+                        )
+                        _LOGGER.info(
+                            "Learning mode: inferred stateless RPS profile for %s as rorg=0x%02x func=0x%02x type=0x%02x",
+                            format_device_id_hex(device_id),
+                            int(RORG.RPS),
+                            inferred_func,
+                            inferred_type,
+                        )
+
+                        discovery_info: DiscoveryInfo = {
+                            "device_id": device_id,
+                            "eep_profile": {
+                                "rorg": int(RORG.RPS),
+                                "rorg_func": inferred_func,
+                                "rorg_type": inferred_type,
+                                "manufacturer": None,
+                            },
+                        }
+
+                        self.register_device_profile(
+                            device_id, int(RORG.RPS), inferred_func, inferred_type
+                        )
+
+                        self.hass.loop.call_soon_threadsafe(
+                            lambda: dispatcher_send(
+                                self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                            )
+                        )
                     return
 
                 if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):

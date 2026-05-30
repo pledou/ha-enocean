@@ -32,6 +32,41 @@ from .types import EEPEntityDef, EepProfile, EntityType
 
 _LOGGER = logging.getLogger(__name__)
 
+RPS_GENERIC_BUTTON_ACTIONS: dict[str, int] = {
+    "R1_AI": 0x70,
+    "R1_AO": 0x50,
+    "R1_BI": 0x30,
+    "R1_BO": 0x10,
+    "R2_AI": 0x37,
+    "R2_AO": 0x15,
+    "R2_BI": 0x00,
+    "R2_BO": 0x20,
+}
+
+
+def _build_generic_rps_button_entities(
+    rorg: int, rorg_func: int, rorg_type: int
+) -> list[EEPEntityDef]:
+    """Build generic button entities for stateless RPS profiles.
+
+    These entities are used when no explicit EEP mapping is available for
+    a learned F6 profile. Channels are encoded as action byte values and
+    consumed by the button platform.
+    """
+    return [
+        EEPEntityDef(
+            description=name,
+            rorg=rorg,
+            rorg_func=rorg_func,
+            rorg_type=rorg_type,
+            data_field=name,
+            entity_type=EntityType.BUTTON,
+            icon="mdi:gesture-tap-button",
+            offset=action,
+        )
+        for name, action in RPS_GENERIC_BUTTON_ACTIONS.items()
+    ]
+
 
 @cache
 def _load_eep_mapping() -> dict:
@@ -565,6 +600,14 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
     # Load EEP profile (source of truth)
     profile = _load_eep_profile(eep_profile)
     if not profile:
+        if rorg == 0xF6:
+            _LOGGER.warning(
+                "No EEP profile found for learned RPS profile RORG=%s FUNC=%s TYPE=%s, using generic stateless button mapping",
+                hex(rorg),
+                hex(rorg_func),
+                hex(rorg_type),
+            )
+            return _build_generic_rps_button_entities(rorg, rorg_func, rorg_type)
         _LOGGER.warning(
             "No EEP profile found for RORG=%s FUNC=%s TYPE=%s",
             hex(rorg),
@@ -575,6 +618,14 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
 
     eep_fields = _extract_eep_fields(profile, rorg, rorg_func, rorg_type)
     if not eep_fields:
+        if rorg == 0xF6:
+            _LOGGER.warning(
+                "EEP profile has no fields for learned RPS profile RORG=%s FUNC=%s TYPE=%s, using generic stateless button mapping",
+                hex(rorg),
+                hex(rorg_func),
+                hex(rorg_type),
+            )
+            return _build_generic_rps_button_entities(rorg, rorg_func, rorg_type)
         _LOGGER.warning(
             "EEP profile has no fields for RORG=%s FUNC=%s TYPE=%s",
             hex(rorg),
@@ -587,15 +638,26 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
 
     # Overlay YAML mapping overrides
     mapping = _load_eep_mapping()
+    mapping_applied = False
     rorg_entry = mapping.get(rorg)
     if rorg_entry:
         func_entry = rorg_entry.get(rorg_func)
         if func_entry:
             type_entry = func_entry.get(rorg_type)
             if type_entry and type_entry.get("entities"):
+                mapping_applied = True
                 entities = _overlay_mapping_overrides(
                     entities, type_entry, rorg, rorg_func, rorg_type
                 )
+
+    if rorg == 0xF6 and not mapping_applied:
+        _LOGGER.warning(
+            "No explicit mapping for learned RPS profile RORG=%s FUNC=%s TYPE=%s; using generic stateless button mapping",
+            hex(rorg),
+            hex(rorg_func),
+            hex(rorg_type),
+        )
+        entities = _build_generic_rps_button_entities(rorg, rorg_func, rorg_type)
 
     _LOGGER.debug(
         "Built %d entities from EEP profile with mapping overrides (RORG=%s FUNC=%s TYPE=%s)",
@@ -745,6 +807,14 @@ def _create_entity_from_mapping(
     if config.get("mode"):
         entity.mode = config["mode"]
 
+    if config.get("channel") is not None:
+        with contextlib.suppress(ValueError, TypeError):
+            channel_val = config["channel"]
+            if isinstance(channel_val, str):
+                entity.offset = int(channel_val, 0)
+            else:
+                entity.offset = int(channel_val)
+
     return entity
 
 
@@ -822,6 +892,14 @@ def _apply_mapping_to_entity(
 
     if config.get("mode"):
         eep_entity.mode = config["mode"]
+
+    if config.get("channel") is not None:
+        with contextlib.suppress(ValueError, TypeError):
+            channel_val = config["channel"]
+            if isinstance(channel_val, str):
+                eep_entity.offset = int(channel_val, 0)
+            else:
+                eep_entity.offset = int(channel_val)
 
 
 def _resolve_entity_category(val: object) -> EntityCategory | None:

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import Mock, patch
 
+from enocean.protocol.constants import RORG
 import pytest
 
 from custom_components.enocean.const import CONF_DEVICE_PROFILES
-from custom_components.enocean.dongle import EnOceanDongle
+from custom_components.enocean.dongle import EnOceanDongle, SIGNAL_DISCOVER_DEVICE
 from homeassistant.const import CONF_DEVICE
 from homeassistant.core import HomeAssistant
 
@@ -207,3 +208,97 @@ async def test_device_profile_update_existing(
     assert profiles[device_key_str]["rorg"] == 0xA5
     assert profiles[device_key_str]["func"] == 0x04
     assert profiles[device_key_str]["type"] == 0x01
+
+
+def test_infer_rps_teach_in_profile_rocker_actions(
+    hass: HomeAssistant, mock_serial_communicator
+) -> None:
+    """Rocker actions should infer F6-02-01 for stateless teach-in."""
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_DEVICE: "/dev/ttyUSB0", CONF_DEVICE_PROFILES: {}},
+        unique_id="test_dongle",
+    )
+    config_entry.add_to_hass(hass)
+    dongle = EnOceanDongle(hass, "/dev/ttyUSB0", config_entry)
+
+    packet = Mock()
+    packet.data = [0xF6, 0x30, 0x00, 0x00, 0x00, 0x00, 0x30]
+
+    assert dongle._infer_rps_teach_in_profile(packet) == (0x02, 0x01)
+
+
+def test_infer_rps_teach_in_profile_window_handle(
+    hass: HomeAssistant, mock_serial_communicator
+) -> None:
+    """Window handle action nibbles should infer F6-10-00."""
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_DEVICE: "/dev/ttyUSB0", CONF_DEVICE_PROFILES: {}},
+        unique_id="test_dongle",
+    )
+    config_entry.add_to_hass(hass)
+    dongle = EnOceanDongle(hass, "/dev/ttyUSB0", config_entry)
+
+    packet = Mock()
+    packet.data = [0xF6, 0x50, 0x00, 0x00, 0x00, 0x00, 0x30]
+
+    assert dongle._infer_rps_teach_in_profile(packet) == (0x10, 0x00)
+
+
+async def test_learning_mode_rps_without_ute_registers_profile_and_dispatches_discovery(
+    hass: HomeAssistant, mock_serial_communicator, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Learning mode should accept RPS packets when devices do not send UTE telegrams."""
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_DEVICE: "/dev/ttyUSB0", CONF_DEVICE_PROFILES: {}},
+        unique_id="test_dongle",
+    )
+    config_entry.add_to_hass(hass)
+    dongle = EnOceanDongle(hass, "/dev/ttyUSB0", config_entry)
+    dongle._communicator.teach_in = True
+
+    dispatched: list[tuple[str, dict]] = []
+
+    def _fake_dispatcher_send(_hass, signal, payload):
+        dispatched.append((signal, payload))
+
+    monkeypatch.setattr(
+        "custom_components.enocean.dongle.dispatcher_send", _fake_dispatcher_send
+    )
+    monkeypatch.setattr(
+        hass.loop,
+        "call_soon_threadsafe",
+        lambda callback: callback(),
+    )
+
+    class DummyRadioPacket:
+        """Simple stand-in for enocean RadioPacket in unit tests."""
+
+    monkeypatch.setattr("custom_components.enocean.dongle.RadioPacket", DummyRadioPacket)
+
+    packet = DummyRadioPacket()
+    packet.rorg = RORG.RPS
+    packet.data = [0xF6, 0x30, 0x00, 0x34, 0x55, 0xCB, 0x30]
+    packet.sender = [0x00, 0x34, 0x55, 0xCB]
+    packet.rorg_of_eep = None
+    packet.rorg_manufacturer = None
+    packet.rorg_func = None
+    packet.rorg_type = None
+
+    dongle.callback(packet)
+
+    device_key = tuple(packet.sender)
+    assert device_key in dongle._device_profiles
+    assert dongle._device_profiles[device_key]["rorg"] == int(RORG.RPS)
+    assert dongle._device_profiles[device_key]["func"] == 0x02
+    assert dongle._device_profiles[device_key]["type"] == 0x01
+
+    assert dispatched
+    signal, discovery_info = dispatched[0]
+    assert signal == SIGNAL_DISCOVER_DEVICE
+    assert discovery_info["device_id"] == packet.sender
+    assert discovery_info["eep_profile"]["rorg"] == int(RORG.RPS)
+    assert discovery_info["eep_profile"]["rorg_func"] == 0x02
+    assert discovery_info["eep_profile"]["rorg_type"] == 0x01
