@@ -79,18 +79,34 @@ class EnOceanDongle:
         """Remove the given device_id from tracking of devices with entities.
 
         This allows the device to be rediscovered and have new entities created
-        if it sends packets again. Returns True if the device was previously
-        marked as having entities, False otherwise.
+        if it sends packets again. Also removes the persisted device profile.
+        Returns True if the device was previously marked as having entities, 
+        False otherwise.
         """
         device_key = tuple(device_id) if isinstance(device_id, list) else (device_id,)
+        removed = False
+        
         if device_key in self._devices_with_entities:
             self._devices_with_entities.remove(device_key)
+            removed = True
             _LOGGER.debug(
                 "Removed device %s from tracking of devices with entities",
                 format_device_id_hex(list(device_key)),
             )
-            return True
-        return False
+        
+        # Also remove persisted profile so device can be re-learned
+        if device_key in self._device_profiles:
+            del self._device_profiles[device_key]
+            removed = True
+            _LOGGER.debug(
+                "Removed persisted profile for device %s",
+                format_device_id_hex(list(device_key)),
+            )
+            # Save updated profiles to config entry
+            if self.hass:
+                self.hass.loop.call_soon_threadsafe(self._async_save_device_profiles)
+        
+        return removed
 
     def has_device_entities(self, device_id) -> bool:
         """Compatibility wrapper: return True if device already has entities.
