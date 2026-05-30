@@ -302,3 +302,6 @@ async def test_learning_mode_rps_without_ute_registers_profile_and_dispatches_di
     assert discovery_info["eep_profile"]["rorg"] == int(RORG.RPS)
     assert discovery_info["eep_profile"]["rorg_func"] == 0x02
     assert discovery_info["eep_profile"]["rorg_type"] == 0x01
+
+    # Cleanup: stop the communicator to avoid hanging threads
+    dongle._communicator.stop()
