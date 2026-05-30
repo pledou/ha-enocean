@@ -351,22 +351,42 @@ async def async_remove_config_entry_device(
     # Check if device is an EnOcean device (has correct identifier format)
     for identifier in device_entry.identifiers:
         if identifier[0] == DOMAIN:
+            device_id_str = identifier[1]
             _LOGGER.info(
                 "Removing EnOcean device %s (%s) from integration",
                 device_entry.name,
-                identifier[1],
+                device_id_str,
             )
+            # Convert identifier string "00_2e_64_df" to list [0x00, 0x2e, 0x64, 0xdf]
+            try:
+                device_id = [int(byte, 16) for byte in device_id_str.split("_")]
+            except (ValueError, AttributeError):
+                _LOGGER.error(
+                    "Invalid device identifier format: %s", device_id_str
+                )
+                return False
+            
             # Also remove it from the dongle's internal tracking so it can be
             # re-discovered if it sends packets in the future.
             enocean_data = hass.data.get(DATA_ENOCEAN, {})
             enocean_dongle = enocean_data.get(ENOCEAN_DONGLE)
             if enocean_dongle is not None:
                 try:
-                    enocean_dongle.remove_entity_for_device(identifier[1])
+                    removed = enocean_dongle.remove_entity_for_device(device_id)
+                    if removed:
+                        _LOGGER.info(
+                            "Device %s successfully removed from dongle tracking",
+                            device_id_str,
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Device %s was not found in dongle tracking",
+                            device_id_str,
+                        )
                 except Exception:
                     _LOGGER.exception(
                         "Error removing device %s from dongle internal tracking",
-                        identifier[1],
+                        device_id_str,
                     )
             # Allow removal - device will be re-discovered if it sends packets
             return True

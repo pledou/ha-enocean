@@ -141,6 +141,14 @@ class DynamicEnOceanEvent(DynamicEnoceanEntity, EventEntity):
             if eb_value != 1:  # not pressed
                 return
 
+        # For R2 field, only trigger if SA (2nd action) is valid
+        if self._field_name == "R2":
+            sa_data = packet.parsed.get("SA")
+            if sa_data:
+                sa_value = sa_data.get("raw_value", sa_data.get("value")) if isinstance(sa_data, dict) else sa_data
+                if sa_value != 1:  # 2nd action not valid
+                    return
+
         event_attributes: dict[str, object] = {
             "id": self.dev_id,
             "field": self._field_name,

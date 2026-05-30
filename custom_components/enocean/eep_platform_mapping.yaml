@@ -236,58 +236,9 @@
               {% if value_parsed.LC == 1 %}on{% else %}off{% endif %}
 # Template-specific overrides can be added here (e.g., D2/0x12 for lights)
 0xF6:
-  0x02:
-    0x01: &F60201
-      device_config:
-        command: ""
-        channel: ""
-        log_learn: ""
-        direction: ""
-        answer: ""
-      entities:
-        - component: button
-          name: "R1_AI"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R1_AO"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R1_BI"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R1_BO"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R2_AI"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R2_AO"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R2_BI"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: button
-          name: "R2_BO"
-          config:
-            icon: "mdi:gesture-tap-button"
-        - component: binary_sensor
-          name: "EB"
-          config:
-            payload_on: "1"
-            payload_off: "0"
-        - component: binary_sensor
-          name: "SA"
-          config:
-            payload_on: "1"
-            payload_off: "0"
-    0x02: *F60201
+  # F6 (RPS) profiles are now handled dynamically from EEP.xml
+  # Event entities are created automatically based on enum fields (R1, R2, WIN, PB, etc.)
+  # No YAML mapping needed - remove old button/binary_sensor mappings to use EEP-based events
 
 0xD5:
   0x00:

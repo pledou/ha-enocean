@@ -98,8 +98,8 @@ class EnOceanDongle:
         if device_key in self._device_profiles:
             del self._device_profiles[device_key]
             removed = True
-            _LOGGER.debug(
-                "Removed persisted profile for device %s",
+            _LOGGER.info(
+                "Removed persisted EEP profile for device %s (can now be re-learned)",
                 format_device_id_hex(list(device_key)),
             )
             # Save updated profiles to config entry
@@ -550,46 +550,51 @@ class EnOceanDongle:
             if self._communicator.teach_in:
                 if packet.rorg != RORG.UTE:
                     if packet.rorg == RORG.RPS:
-                        # If the device is already paired with entities, ignore
-                        # pairing-mode RPS frames to avoid duplicate discovery.
+                        # If the device is already paired with entities, skip teach-in
+                        # but still process the packet for normal entity updates below
                         if self.has_device_entities(device_id):
                             _LOGGER.debug(
-                                "Learning mode: ignoring RPS teach-in frame from already known device %s",
+                                "Learning mode: RPS device %s already known, processing packet normally",
                                 format_device_id_hex(device_id),
                             )
-                            return
-
-                        inferred_func, inferred_type = self._infer_rps_teach_in_profile(
-                            packet
-                        )
-                        _LOGGER.info(
-                            "Learning mode: inferred stateless RPS profile for %s as rorg=0x%02x func=0x%02x type=0x%02x",
-                            format_device_id_hex(device_id),
-                            int(RORG.RPS),
-                            inferred_func,
-                            inferred_type,
-                        )
-
-                        discovery_info: DiscoveryInfo = {
-                            "device_id": device_id,
-                            "eep_profile": {
-                                "rorg": int(RORG.RPS),
-                                "rorg_func": inferred_func,
-                                "rorg_type": inferred_type,
-                                "manufacturer": None,
-                            },
-                        }
-
-                        self.register_device_profile(
-                            device_id, int(RORG.RPS), inferred_func, inferred_type
-                        )
-
-                        self.hass.loop.call_soon_threadsafe(
-                            lambda: dispatcher_send(
-                                self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                            # Don't return - let packet continue to normal processing
+                        else:
+                            # New device - perform RPS teach-in
+                            inferred_func, inferred_type = self._infer_rps_teach_in_profile(
+                                packet
                             )
-                        )
-                    return
+                            _LOGGER.info(
+                                "Learning mode: inferred stateless RPS profile for %s as rorg=0x%02x func=0x%02x type=0x%02x",
+                                format_device_id_hex(device_id),
+                                int(RORG.RPS),
+                                inferred_func,
+                                inferred_type,
+                            )
+
+                            discovery_info: DiscoveryInfo = {
+                                "device_id": device_id,
+                                "eep_profile": {
+                                    "rorg": int(RORG.RPS),
+                                    "rorg_func": inferred_func,
+                                    "rorg_type": inferred_type,
+                                    "manufacturer": None,
+                                },
+                            }
+
+                            self.register_device_profile(
+                                device_id, int(RORG.RPS), inferred_func, inferred_type
+                            )
+
+                            self.hass.loop.call_soon_threadsafe(
+                                lambda: dispatcher_send(
+                                    self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                                )
+                            )
+                        # For non-UTE learning packets (RPS), continue to normal processing
+                        # instead of returning - this allows entities to receive updates
+                    else:
+                        # Non-RPS, non-UTE packet during learning mode - ignore
+                        return
 
                 if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
                     rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
