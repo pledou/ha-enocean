@@ -274,11 +274,6 @@ async def test_learning_mode_rps_without_ute_registers_profile_and_dispatches_di
     monkeypatch.setattr(
         "custom_components.enocean.dongle.dispatcher_send", _fake_dispatcher_send
     )
-    monkeypatch.setattr(
-        hass.loop,
-        "call_soon_threadsafe",
-        lambda callback: callback(),
-    )
 
     class DummyRadioPacket:
         """Simple stand-in for enocean RadioPacket in unit tests."""
@@ -295,6 +290,9 @@ async def test_learning_mode_rps_without_ute_registers_profile_and_dispatches_di
     packet.rorg_type = None
 
     dongle.callback(packet)
+
+    # Wait for async callbacks to be processed
+    await hass.async_block_till_done()
 
     device_key = tuple(packet.sender)
     assert device_key in dongle._device_profiles
