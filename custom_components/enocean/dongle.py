@@ -502,6 +502,16 @@ class EnOceanDongle:
 
         Stateless buttons may not emit UTE telegrams. During learning mode,
         infer a practical profile from the action byte so pairing can proceed.
+        
+        Profiles detected:
+        - F6-10-00: Window Handle (nibbles 4/5/6/7)
+        - F6-05-01: Liquid Leakage Sensor (0x11)
+        - F6-02-01: Rocker Switch Style 1 (common values)
+        - F6-02-02: Rocker Switch Style 2 (R2 bits pattern)
+        - F6-01-01: Push Button (simple on/off)
+        
+        Note: Some values overlap (e.g., 0x10, 0x30 for rockers vs smoke detector).
+        We prioritize common device types. Smoke detectors should use UTE teach-in.
         """
         action = 0
         if hasattr(packet, "data") and len(packet.data) > 1:
@@ -509,17 +519,48 @@ class EnOceanDongle:
                 action = int(packet.data[1])
 
         # Window handle action families use nibble values 4/5/6/7
-        # Check this FIRST as it's more specific than rocker actions
+        # Check this FIRST as it's most specific
         action_nibble = (action & 0x70) >> 4
         if action_nibble in {0x04, 0x05, 0x06, 0x07}:
             return (0x10, 0x00)
 
-        # Common rocker button actions (F6-02-01 / style 2)
+        # Liquid Leakage Sensor - water detected (unique value 0x11 = 17)
+        if action == 0x11:
+            return (0x05, 0x01)
+
+        # Rocker button actions (F6-02-01 / style 1) - most common
+        # Characteristic values with R1 field (bits 7-5) and specific combinations
         if action in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
             return (0x02, 0x01)
 
-        # Unknown RPS subtype: keep generic FUNC/TYPE to allow fallback mapping
-        return (0x00, 0x00)
+        # Rocker button actions (F6-02-02 / style 2)
+        # Uses R1 (bits 7-5) and R2 (bits 4-2) fields
+        # Detect by checking R2 field pattern (bits 4-2 are non-zero)
+        r2_field = (action & 0x1C) >> 2  # Extract bits 4-2
+        r1_field = (action & 0xE0) >> 5  # Extract bits 7-5
+        
+        # F6-02-02 typically has R1=0 and R2=1,2,3 OR R1=1,2,3 with low action values
+        # Common values: 0x04-0x0F (when R2 is active), 0x20-0x7F (when R1 is active)
+        if r2_field > 0 and action < 0x20:
+            return (0x02, 0x02)
+        
+        # Additional F6-02-02 detection: high R1 values without rocker style 1 pattern
+        if r1_field > 0 and action not in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
+            return (0x02, 0x02)
+
+        # Push Button (F6-01-01) - simple single button
+        # Uses PB field at bit 3: pressed=0x08, released=0x00
+        # Detect very simple patterns that don't match other profiles
+        if action in {0x00, 0x08} or (action & 0xF7) == 0x00:
+            return (0x01, 0x01)
+
+        # Note: Smoke detector (F6-05-02) uses values {0x00, 0x10, 0x30}
+        # which overlap with rockers and push buttons. Cannot reliably detect without UTE.
+        # Users should use UTE teach-in or manual configuration for smoke detectors.
+
+        # Unknown RPS subtype: default to rocker style 1 as most common
+        # This provides better compatibility for general button devices
+        return (0x02, 0x01)
 
     def callback(self, packet):
         """Handle EnOcean device's callback.
