@@ -33,6 +33,42 @@ from .types import EEPEntityDef, EepProfile, EntityType
 _LOGGER = logging.getLogger(__name__)
 
 
+def _convert_rps_to_events(entities: list[EEPEntityDef]) -> list[EEPEntityDef]:
+    """Convert RPS enum fields to event entities with proper event types.
+    
+    For F6 profiles, enum fields like R1, R2, WIN, PB define button actions.
+    Convert these to event entities where enum_items become event_types.
+    Skip auxiliary fields like EB (Energy bow) and SA (2nd action) which are flags.
+    """
+    # Auxiliary fields that should not be event entities
+    SKIP_FIELDS = {"EB", "SA", "T21", "NU"}
+    
+    event_entities = []
+    
+    for entity in entities:
+        # For F6 RPS profiles, convert enum fields to events (except auxiliary fields)
+        if entity.rorg == 0xF6 and entity.enum_items and entity.data_field not in SKIP_FIELDS:
+            # Create an event entity with enum descriptions as event types
+            event_types = [item["description"] for item in entity.enum_items]
+            if event_types:
+                event_entities.append(
+                    EEPEntityDef(
+                        description=f"{entity.description} events",
+                        rorg=entity.rorg,
+                        rorg_func=entity.rorg_func,
+                        rorg_type=entity.rorg_type,
+                        data_field=entity.data_field,
+                        entity_type=EntityType.EVENT,
+                        icon="mdi:gesture-tap-button",
+                        enum_options=event_types,
+                        enum_items=entity.enum_items,
+                        offset=entity.offset,
+                    )
+                )
+    
+    return event_entities if event_entities else entities
+
+
 @cache
 def _load_eep_mapping() -> dict:
     """Load EEP-to-platform mapping from YAML file.
@@ -587,15 +623,21 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
 
     # Overlay YAML mapping overrides
     mapping = _load_eep_mapping()
+    mapping_applied = False
     rorg_entry = mapping.get(rorg)
     if rorg_entry:
         func_entry = rorg_entry.get(rorg_func)
         if func_entry:
             type_entry = func_entry.get(rorg_type)
             if type_entry and type_entry.get("entities"):
+                mapping_applied = True
                 entities = _overlay_mapping_overrides(
                     entities, type_entry, rorg, rorg_func, rorg_type
                 )
+
+    # For F6 RPS profiles, convert enum fields to event entities
+    if rorg == 0xF6:
+        entities = _convert_rps_to_events(entities)
 
     _LOGGER.debug(
         "Built %d entities from EEP profile with mapping overrides (RORG=%s FUNC=%s TYPE=%s)",
@@ -745,6 +787,14 @@ def _create_entity_from_mapping(
     if config.get("mode"):
         entity.mode = config["mode"]
 
+    if config.get("channel") is not None:
+        with contextlib.suppress(ValueError, TypeError):
+            channel_val = config["channel"]
+            if isinstance(channel_val, str):
+                entity.offset = int(channel_val, 0)
+            else:
+                entity.offset = int(channel_val)
+
     return entity
 
 
@@ -822,6 +872,14 @@ def _apply_mapping_to_entity(
 
     if config.get("mode"):
         eep_entity.mode = config["mode"]
+
+    if config.get("channel") is not None:
+        with contextlib.suppress(ValueError, TypeError):
+            channel_val = config["channel"]
+            if isinstance(channel_val, str):
+                eep_entity.offset = int(channel_val, 0)
+            else:
+                eep_entity.offset = int(channel_val)
 
 
 def _resolve_entity_category(val: object) -> EntityCategory | None:

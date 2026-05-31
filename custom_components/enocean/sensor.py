@@ -582,3 +582,5 @@ class LastDataReceivedSensor(DynamicEnOceanSensor):
         # Store current UTC timestamp
         self._attr_native_value = datetime.now(UTC)
         self.schedule_update_ha_state()
+
+

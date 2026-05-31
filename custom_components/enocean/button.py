@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DATA_ENOCEAN, ENOCEAN_DONGLE, LOGGER
 from .entity import DynamicEnoceanEntity, EnOceanEntity, async_create_entities_from_eep
 from .types import EEPEntityDef
+
+EVENT_BUTTON_PRESSED = "button_pressed"
 
 
 async def async_setup_entry(
@@ -67,7 +69,11 @@ async def async_setup_entry(
                 return None
 
             try:
-                return {"channel": int(channel), "button_name": description}
+                normalized_channel = int(channel)
+                return {
+                    "channel": normalized_channel,
+                    "button_name": description,
+                }
             except (TypeError, ValueError):
                 return None
 
@@ -111,6 +117,7 @@ class EnOceanButton(EnOceanEntity, ButtonEntity):
             fields=fields,
         )
         self.channel = channel
+        self._button_name = button_name
         self._attr_name = f"{dev_name} {button_name}"
 
     async def async_press(self) -> None:
@@ -152,7 +159,17 @@ class DynamicEnOceanButton(DynamicEnoceanEntity, EnOceanButton):
         )
         # Initialize button-specific attributes
         self.channel = channel
+        self._button_name = button_name
         self._attr_name = f"{dev_name} {button_name}"
+
+    @callback
+    def value_changed(self, packet) -> None:
+        """Handle value changes for button entity.
+        
+        Note: F6 RPS profiles are now handled by event platform.
+        This method is kept for potential non-F6 button implementations.
+        """
+        pass
 
 
 class CommandTemplateButton(DynamicEnoceanEntity, ButtonEntity):

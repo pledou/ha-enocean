@@ -43,6 +43,7 @@ class EntityType(Enum):
     SELECT = "select"
     LIGHT = "light"
     BUTTON = "button"
+    EVENT = "event"
     NUMBER = "number"
     SWITCH = "switch"
 

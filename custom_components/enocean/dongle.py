@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+import contextlib
 import glob
 import logging
 from os.path import basename, normpath
@@ -78,18 +79,34 @@ class EnOceanDongle:
         """Remove the given device_id from tracking of devices with entities.
 
         This allows the device to be rediscovered and have new entities created
-        if it sends packets again. Returns True if the device was previously
-        marked as having entities, False otherwise.
+        if it sends packets again. Also removes the persisted device profile.
+        Returns True if the device was previously marked as having entities, 
+        False otherwise.
         """
         device_key = tuple(device_id) if isinstance(device_id, list) else (device_id,)
+        removed = False
+        
         if device_key in self._devices_with_entities:
             self._devices_with_entities.remove(device_key)
+            removed = True
             _LOGGER.debug(
                 "Removed device %s from tracking of devices with entities",
                 format_device_id_hex(list(device_key)),
             )
-            return True
-        return False
+        
+        # Also remove persisted profile so device can be re-learned
+        if device_key in self._device_profiles:
+            del self._device_profiles[device_key]
+            removed = True
+            _LOGGER.info(
+                "Removed persisted EEP profile for device %s (can now be re-learned)",
+                format_device_id_hex(list(device_key)),
+            )
+            # Save updated profiles to config entry
+            if self.hass:
+                self.hass.loop.call_soon_threadsafe(self._async_save_device_profiles)
+        
+        return removed
 
     def has_device_entities(self, device_id) -> bool:
         """Compatibility wrapper: return True if device already has entities.
@@ -480,6 +497,71 @@ class EnOceanDongle:
         """Send a command through the EnOcean dongle."""
         self._communicator.send(command)
 
+    def _infer_rps_teach_in_profile(self, packet) -> tuple[int, int]:
+        """Infer a likely FUNC/TYPE pair for RPS teach-in without UTE.
+
+        Stateless buttons may not emit UTE telegrams. During learning mode,
+        infer a practical profile from the action byte so pairing can proceed.
+        
+        Profiles detected:
+        - F6-10-00: Window Handle (nibbles 4/5/6/7)
+        - F6-05-01: Liquid Leakage Sensor (0x11)
+        - F6-02-01: Rocker Switch Style 1 (common values)
+        - F6-02-02: Rocker Switch Style 2 (R2 bits pattern)
+        - F6-01-01: Push Button (simple on/off)
+        
+        Note: Some values overlap (e.g., 0x10, 0x30 for rockers vs smoke detector).
+        We prioritize common device types. Smoke detectors should use UTE teach-in.
+        """
+        action = 0
+        if hasattr(packet, "data") and len(packet.data) > 1:
+            with contextlib.suppress(TypeError, ValueError):
+                action = int(packet.data[1])
+
+        # Window handle action families use nibble values 4/5/6/7
+        # Check this FIRST as it's most specific
+        action_nibble = (action & 0x70) >> 4
+        if action_nibble in {0x04, 0x05, 0x06, 0x07}:
+            return (0x10, 0x00)
+
+        # Liquid Leakage Sensor - water detected (unique value 0x11 = 17)
+        if action == 0x11:
+            return (0x05, 0x01)
+
+        # Rocker button actions (F6-02-01 / style 1) - most common
+        # Characteristic values with R1 field (bits 7-5) and specific combinations
+        if action in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
+            return (0x02, 0x01)
+
+        # Rocker button actions (F6-02-02 / style 2)
+        # Uses R1 (bits 7-5) and R2 (bits 4-2) fields
+        # Detect by checking R2 field pattern (bits 4-2 are non-zero)
+        r2_field = (action & 0x1C) >> 2  # Extract bits 4-2
+        r1_field = (action & 0xE0) >> 5  # Extract bits 7-5
+        
+        # F6-02-02 typically has R1=0 and R2=1,2,3 OR R1=1,2,3 with low action values
+        # Common values: 0x04-0x0F (when R2 is active), 0x20-0x7F (when R1 is active)
+        if r2_field > 0 and action < 0x20:
+            return (0x02, 0x02)
+        
+        # Additional F6-02-02 detection: high R1 values without rocker style 1 pattern
+        if r1_field > 0 and action not in {0x70, 0x50, 0x30, 0x10, 0x37, 0x15}:
+            return (0x02, 0x02)
+
+        # Push Button (F6-01-01) - simple single button
+        # Uses PB field at bit 3: pressed=0x08, released=0x00
+        # Detect very simple patterns that don't match other profiles
+        if action in {0x00, 0x08} or (action & 0xF7) == 0x00:
+            return (0x01, 0x01)
+
+        # Note: Smoke detector (F6-05-02) uses values {0x00, 0x10, 0x30}
+        # which overlap with rockers and push buttons. Cannot reliably detect without UTE.
+        # Users should use UTE teach-in or manual configuration for smoke detectors.
+
+        # Unknown RPS subtype: default to rocker style 1 as most common
+        # This provides better compatibility for general button devices
+        return (0x02, 0x01)
+
     def callback(self, packet):
         """Handle EnOcean device's callback.
 
@@ -509,7 +591,54 @@ class EnOceanDongle:
             # the registered profile is available to listeners.
             if self._communicator.teach_in:
                 if packet.rorg != RORG.UTE:
-                    return
+                    if packet.rorg == RORG.RPS:
+                        # If the device is already paired with entities, skip teach-in
+                        # but still process the packet for normal entity updates below
+                        if self.has_device_entities(device_id):
+                            _LOGGER.debug(
+                                "Learning mode: RPS device %s already known, processing packet normally",
+                                format_device_id_hex(device_id),
+                            )
+                            # Don't return - let packet continue to normal processing
+                        else:
+                            # New device - perform RPS teach-in
+                            inferred_func, inferred_type = self._infer_rps_teach_in_profile(
+                                packet
+                            )
+                            _LOGGER.info(
+                                "Learning mode: inferred stateless RPS profile for %s as rorg=0x%02x func=0x%02x type=0x%02x",
+                                format_device_id_hex(device_id),
+                                int(RORG.RPS),
+                                inferred_func,
+                                inferred_type,
+                            )
+
+                            discovery_info: DiscoveryInfo = {
+                                "device_id": device_id,
+                                "eep_profile": {
+                                    "rorg": int(RORG.RPS),
+                                    "rorg_func": inferred_func,
+                                    "rorg_type": inferred_type,
+                                    "manufacturer": None,
+                                },
+                            }
+
+                            self.register_device_profile(
+                                device_id, int(RORG.RPS), inferred_func, inferred_type
+                            )
+
+                            self.hass.loop.call_soon_threadsafe(
+                                lambda: dispatcher_send(
+                                    self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                                )
+                            )
+                            # New device discovered - return to avoid processing before entities exist
+                            return
+                        # For known RPS devices, continue to normal processing
+                        # to allow entities to receive updates
+                    else:
+                        # Non-RPS, non-UTE packet during learning mode - ignore
+                        return
 
                 if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
                     rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
