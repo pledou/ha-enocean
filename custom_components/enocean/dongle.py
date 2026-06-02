@@ -9,7 +9,7 @@ from os.path import basename, normpath
 
 from enocean.communicators import SerialCommunicator
 from enocean.protocol.constants import PACKET, RORG
-from enocean.protocol.packet import Packet, RadioPacket
+from enocean.protocol.packet import Packet, RadioPacket, UTETeachInPacket
 import serial
 
 from homeassistant.config_entries import ConfigEntry
@@ -569,6 +569,15 @@ class EnOceanDongle:
         is an incoming packet. This runs in a background thread, so we need to
         schedule all dispatcher sends through the event loop to avoid task context issues.
         """
+        
+        # DEBUG: Log UTE packet arrival and teach_in status
+        if isinstance(packet, UTETeachInPacket):
+            _LOGGER.warning(
+                "DEBUG: UTE teach-in packet received in callback - sender=%s, teach_in=%s, base_id=%s",
+                format_device_id_hex(packet.sender) if hasattr(packet, 'sender') else 'unknown',
+                self._communicator.teach_in,
+                self._communicator.base_id
+            )
 
         if isinstance(packet, RadioPacket):
             # Safely obtain optional attributes from packet to avoid AttributeError
@@ -637,8 +646,22 @@ class EnOceanDongle:
                         # For known RPS devices, continue to normal processing
                         # to allow entities to receive updates
                     else:
-                        # Non-RPS, non-UTE packet during learning mode - ignore
-                        return
+                        # Non-RPS, non-UTE packet during learning mode
+                        # Check if device already has a registered profile from UTE teach-in
+                        device_key = tuple(device_id) if isinstance(device_id, list) else (device_id,)
+                        if device_key not in self._device_profiles:
+                            # No profile registered yet - ignore operational packets
+                            # until UTE teach-in completes
+                            _LOGGER.debug(
+                                "Learning mode: ignoring non-UTE packet from %s (waiting for UTE teach-in)",
+                                format_device_id_hex(device_id)
+                            )
+                            return
+                        # Device has profile from UTE teach-in - fall through to process operational data
+                        _LOGGER.info(
+                            "Learning mode: processing operational packet from %s after UTE teach-in",
+                            format_device_id_hex(device_id)
+                        )
 
                 if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
                     rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
@@ -646,6 +669,15 @@ class EnOceanDongle:
                     rorg_value = int(
                         rorg_of_eep_val if rorg_of_eep_val is not None else 0
                     )
+
+                _LOGGER.info(
+                    "Learning mode: UTE teach-in from %s - RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X",
+                    format_device_id_hex(device_id),
+                    rorg_value,
+                    rorg_func if rorg_func is not None else 0,
+                    rorg_type if rorg_type is not None else 0,
+                    rorg_manuf_val if rorg_manuf_val is not None else 0
+                )
 
                 discovery_info: DiscoveryInfo = {
                     "device_id": device_id,
