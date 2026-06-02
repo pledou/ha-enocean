@@ -657,52 +657,58 @@ class EnOceanDongle:
                                 format_device_id_hex(device_id)
                             )
                             return
-                        # Device has profile from UTE teach-in - fall through to process operational data
+                        # Device has profile from UTE teach-in
+                        # Skip discovery (already done) and process as normal operational packet
                         _LOGGER.info(
                             "Learning mode: processing operational packet from %s after UTE teach-in",
                             format_device_id_hex(device_id)
                         )
+                        # Fall through to normal packet processing below (skip UTE discovery block)
+                        # by not executing the UTE-specific discovery code
 
-                if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
-                    rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
-                else:
-                    rorg_value = int(
-                        rorg_of_eep_val if rorg_of_eep_val is not None else 0
+                # UTE teach-in packet: Extract profile and trigger discovery
+                # Only execute this block for actual UTE packets (RORG.UTE)
+                if packet.rorg == RORG.UTE:
+                    if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
+                        rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
+                    else:
+                        rorg_value = int(
+                            rorg_of_eep_val if rorg_of_eep_val is not None else 0
+                        )
+
+                    _LOGGER.info(
+                        "Learning mode: UTE teach-in from %s - RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X",
+                        format_device_id_hex(device_id),
+                        rorg_value,
+                        rorg_func if rorg_func is not None else 0,
+                        rorg_type if rorg_type is not None else 0,
+                        rorg_manuf_val if rorg_manuf_val is not None else 0
                     )
 
-                _LOGGER.info(
-                    "Learning mode: UTE teach-in from %s - RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X",
-                    format_device_id_hex(device_id),
-                    rorg_value,
-                    rorg_func if rorg_func is not None else 0,
-                    rorg_type if rorg_type is not None else 0,
-                    rorg_manuf_val if rorg_manuf_val is not None else 0
-                )
+                    discovery_info: DiscoveryInfo = {
+                        "device_id": device_id,
+                        "eep_profile": {
+                            "rorg": rorg_value,
+                            "rorg_func": rorg_func if rorg_func is not None else 0,
+                            "rorg_type": rorg_type if rorg_type is not None else 0,
+                            "manufacturer": rorg_manuf_val,
+                        },
+                    }
 
-                discovery_info: DiscoveryInfo = {
-                    "device_id": device_id,
-                    "eep_profile": {
-                        "rorg": rorg_value,
-                        "rorg_func": rorg_func if rorg_func is not None else 0,
-                        "rorg_type": rorg_type if rorg_type is not None else 0,
-                        "manufacturer": rorg_manuf_val,
-                    },
-                }
-
-                # Register device profile for future packet parsing
-                self.register_device_profile(
-                    device_id, rorg_value, rorg_func or 0, rorg_type or 0
-                )
-
-                # Schedule discovery signal in event loop thread-safely
-                self.hass.loop.call_soon_threadsafe(
-                    lambda: dispatcher_send(
-                        self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                    # Register device profile for future packet parsing
+                    self.register_device_profile(
+                        device_id, rorg_value, rorg_func or 0, rorg_type or 0
                     )
-                )
 
-                # Do not dispatch the generic receive signal for teach-in packets
-                return
+                    # Schedule discovery signal in event loop thread-safely
+                    self.hass.loop.call_soon_threadsafe(
+                        lambda: dispatcher_send(
+                            self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                        )
+                    )
+
+                    # Do not dispatch the generic receive signal for teach-in packets
+                    return
 
             # Validate packet before dispatching
             if not self._validate_and_track_packet(packet):
