@@ -9,7 +9,7 @@ from os.path import basename, normpath
 
 from enocean.communicators import SerialCommunicator
 from enocean.protocol.constants import PACKET, RORG
-from enocean.protocol.packet import Packet, RadioPacket
+from enocean.protocol.packet import Packet, RadioPacket, UTETeachInPacket
 import serial
 
 from homeassistant.config_entries import ConfigEntry
@@ -569,6 +569,15 @@ class EnOceanDongle:
         is an incoming packet. This runs in a background thread, so we need to
         schedule all dispatcher sends through the event loop to avoid task context issues.
         """
+        
+        # DEBUG: Log UTE packet arrival and teach_in status
+        if isinstance(packet, UTETeachInPacket):
+            _LOGGER.warning(
+                "DEBUG: UTE teach-in packet received in callback - sender=%s, teach_in=%s, base_id=%s",
+                format_device_id_hex(packet.sender) if hasattr(packet, 'sender') else 'unknown',
+                self._communicator.teach_in,
+                self._communicator.base_id
+            )
 
         if isinstance(packet, RadioPacket):
             # Safely obtain optional attributes from packet to avoid AttributeError
@@ -637,40 +646,93 @@ class EnOceanDongle:
                         # For known RPS devices, continue to normal processing
                         # to allow entities to receive updates
                     else:
-                        # Non-RPS, non-UTE packet during learning mode - ignore
+                        # Non-RPS, non-UTE packet during learning mode
+                        # Check if device already has a registered profile from UTE teach-in
+                        device_key = tuple(device_id) if isinstance(device_id, list) else (device_id,)
+                        if device_key not in self._device_profiles:
+                            # No profile registered yet - ignore operational packets
+                            # until UTE teach-in completes
+                            _LOGGER.debug(
+                                "Learning mode: ignoring non-UTE packet from %s (waiting for UTE teach-in)",
+                                format_device_id_hex(device_id)
+                            )
+                            return
+                        # Device has profile from UTE teach-in
+                        # Skip discovery (already done) and process as normal operational packet
+                        _LOGGER.info(
+                            "Learning mode: processing operational packet from %s after UTE teach-in",
+                            format_device_id_hex(device_id)
+                        )
+                        # Fall through to normal packet processing below (skip UTE discovery block)
+                        # by not executing the UTE-specific discovery code
+
+                # UTE teach-in packet: Extract profile and trigger discovery
+                # Only execute this block for actual UTE packets (RORG.UTE)
+                if packet.rorg == RORG.UTE:
+                    # Skip UTE teach-in if device already has entities (already paired)
+                    # This prevents accidental re-pairing and profile corruption during learning mode
+                    if self.has_device_entities(device_id):
+                        _LOGGER.info(
+                            "Learning mode: ignoring UTE teach-in from %s - device already paired",
+                            format_device_id_hex(device_id)
+                        )
                         return
 
-                if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
-                    rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
-                else:
-                    rorg_value = int(
-                        rorg_of_eep_val if rorg_of_eep_val is not None else 0
+                    if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
+                        rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
+                    else:
+                        rorg_value = int(
+                            rorg_of_eep_val if rorg_of_eep_val is not None else 0
+                        )
+
+                    # Validate UTE teach-in has valid EEP data before proceeding
+                    if rorg_value == 0 or rorg_value == RORG.UNDEFINED:
+                        _LOGGER.warning(
+                            "Learning mode: UTE teach-in from %s has invalid/incomplete EEP data "
+                            "(RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X). "
+                            "Rejecting profile. Device may need to be re-paired.",
+                            format_device_id_hex(device_id),
+                            rorg_value,
+                            rorg_func if rorg_func is not None else 0,
+                            rorg_type if rorg_type is not None else 0,
+                            rorg_manuf_val if rorg_manuf_val is not None else 0
+                        )
+                        # Skip registration and discovery for invalid profiles
+                        return
+
+                    _LOGGER.info(
+                        "Learning mode: UTE teach-in from %s - RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X",
+                        format_device_id_hex(device_id),
+                        rorg_value,
+                        rorg_func if rorg_func is not None else 0,
+                        rorg_type if rorg_type is not None else 0,
+                        rorg_manuf_val if rorg_manuf_val is not None else 0
                     )
 
-                discovery_info: DiscoveryInfo = {
-                    "device_id": device_id,
-                    "eep_profile": {
-                        "rorg": rorg_value,
-                        "rorg_func": rorg_func if rorg_func is not None else 0,
-                        "rorg_type": rorg_type if rorg_type is not None else 0,
-                        "manufacturer": rorg_manuf_val,
-                    },
-                }
+                    discovery_info: DiscoveryInfo = {
+                        "device_id": device_id,
+                        "eep_profile": {
+                            "rorg": rorg_value,
+                            "rorg_func": rorg_func if rorg_func is not None else 0,
+                            "rorg_type": rorg_type if rorg_type is not None else 0,
+                            "manufacturer": rorg_manuf_val,
+                        },
+                    }
 
-                # Register device profile for future packet parsing
-                self.register_device_profile(
-                    device_id, rorg_value, rorg_func or 0, rorg_type or 0
-                )
-
-                # Schedule discovery signal in event loop thread-safely
-                self.hass.loop.call_soon_threadsafe(
-                    lambda: dispatcher_send(
-                        self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                    # Register device profile for future packet parsing
+                    self.register_device_profile(
+                        device_id, rorg_value, rorg_func or 0, rorg_type or 0
                     )
-                )
 
-                # Do not dispatch the generic receive signal for teach-in packets
-                return
+                    # Schedule discovery signal in event loop thread-safely
+                    self.hass.loop.call_soon_threadsafe(
+                        lambda: dispatcher_send(
+                            self.hass, SIGNAL_DISCOVER_DEVICE, discovery_info
+                        )
+                    )
+
+                    # Do not dispatch the generic receive signal for teach-in packets
+                    return
 
             # Validate packet before dispatching
             if not self._validate_and_track_packet(packet):
@@ -708,6 +770,16 @@ class EnOceanDongle:
             func: FUNC value
             type_: TYPE value
         """
+        # Validate profile - reject invalid/undefined RORG values
+        if rorg == 0 or rorg == RORG.UNDEFINED:
+            _LOGGER.warning(
+                "Rejecting invalid device profile for %s: rorg=0x%02X (UNDEFINED) is not valid. "
+                "This may indicate incomplete UTE teach-in data.",
+                format_device_id_hex(device_id) if isinstance(device_id, list) else format_device_id_hex([device_id]),
+                rorg,
+            )
+            return
+        
         device_key = tuple(device_id) if isinstance(device_id, list) else (device_id,)
         self._device_profiles[device_key] = {
             "rorg": rorg,
@@ -755,6 +827,16 @@ class EnOceanDongle:
                 rorg = int(profile.get("rorg", 0))
                 func = int(profile.get("func", 0))
                 type_ = int(profile.get("type", 0))
+
+                # Skip invalid profiles with UNDEFINED rorg
+                if rorg == 0 or rorg == RORG.UNDEFINED:
+                    _LOGGER.warning(
+                        "Skipping invalid persisted profile for device %s: "
+                        "rorg=0x%02X (UNDEFINED) is not valid. Device needs to be re-paired.",
+                        format_device_id_hex(list(device_key)),
+                        rorg,
+                    )
+                    continue
 
                 # Store validated profile with integer values
                 self._device_profiles[device_key] = {
