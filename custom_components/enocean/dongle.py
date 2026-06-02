@@ -669,12 +669,36 @@ class EnOceanDongle:
                 # UTE teach-in packet: Extract profile and trigger discovery
                 # Only execute this block for actual UTE packets (RORG.UTE)
                 if packet.rorg == RORG.UTE:
+                    # Skip UTE teach-in if device already has entities (already paired)
+                    # This prevents accidental re-pairing and profile corruption during learning mode
+                    if self.has_device_entities(device_id):
+                        _LOGGER.info(
+                            "Learning mode: ignoring UTE teach-in from %s - device already paired",
+                            format_device_id_hex(device_id)
+                        )
+                        return
+
                     if (rorg_of_eep_val == RORG.MSC) and (rorg_manuf_val is not None):
                         rorg_value = int(f"{rorg_of_eep_val:02x}{rorg_manuf_val:03x}", 16)
                     else:
                         rorg_value = int(
                             rorg_of_eep_val if rorg_of_eep_val is not None else 0
                         )
+
+                    # Validate UTE teach-in has valid EEP data before proceeding
+                    if rorg_value == 0 or rorg_value == RORG.UNDEFINED:
+                        _LOGGER.warning(
+                            "Learning mode: UTE teach-in from %s has invalid/incomplete EEP data "
+                            "(RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X). "
+                            "Rejecting profile. Device may need to be re-paired.",
+                            format_device_id_hex(device_id),
+                            rorg_value,
+                            rorg_func if rorg_func is not None else 0,
+                            rorg_type if rorg_type is not None else 0,
+                            rorg_manuf_val if rorg_manuf_val is not None else 0
+                        )
+                        # Skip registration and discovery for invalid profiles
+                        return
 
                     _LOGGER.info(
                         "Learning mode: UTE teach-in from %s - RORG=0x%02X, FUNC=0x%02X, TYPE=0x%02X, Manuf=0x%03X",
@@ -746,6 +770,16 @@ class EnOceanDongle:
             func: FUNC value
             type_: TYPE value
         """
+        # Validate profile - reject invalid/undefined RORG values
+        if rorg == 0 or rorg == RORG.UNDEFINED:
+            _LOGGER.warning(
+                "Rejecting invalid device profile for %s: rorg=0x%02X (UNDEFINED) is not valid. "
+                "This may indicate incomplete UTE teach-in data.",
+                format_device_id_hex(device_id) if isinstance(device_id, list) else format_device_id_hex([device_id]),
+                rorg,
+            )
+            return
+        
         device_key = tuple(device_id) if isinstance(device_id, list) else (device_id,)
         self._device_profiles[device_key] = {
             "rorg": rorg,
@@ -793,6 +827,16 @@ class EnOceanDongle:
                 rorg = int(profile.get("rorg", 0))
                 func = int(profile.get("func", 0))
                 type_ = int(profile.get("type", 0))
+
+                # Skip invalid profiles with UNDEFINED rorg
+                if rorg == 0 or rorg == RORG.UNDEFINED:
+                    _LOGGER.warning(
+                        "Skipping invalid persisted profile for device %s: "
+                        "rorg=0x%02X (UNDEFINED) is not valid. Device needs to be re-paired.",
+                        format_device_id_hex(list(device_key)),
+                        rorg,
+                    )
+                    continue
 
                 # Store validated profile with integer values
                 self._device_profiles[device_key] = {
