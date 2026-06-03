@@ -784,6 +784,12 @@ def _create_entity_from_mapping(
     if config.get("command_template"):
         entity.command_template = config["command_template"]
 
+    if config.get("command_template_on"):
+        entity.command_template_on = config["command_template_on"]
+
+    if config.get("command_template_off"):
+        entity.command_template_off = config["command_template_off"]
+
     if config.get("mode"):
         entity.mode = config["mode"]
 
