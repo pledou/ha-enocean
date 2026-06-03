@@ -17,6 +17,98 @@ This custom integration extends the standard Home Assistant EnOcean integration 
 - **Easy Setup**: Config flow with automatic device discovery
 - **Serial Port Auto-detection**: Automatically finds your EnOcean USB dongle
 
+## Design Philosophy
+
+This integration follows a **data-driven architecture** that maximizes reusability and minimizes hard-coded device specifics:
+
+### 1. **EEP-First Approach**
+The integration leverages the EnOcean Equipment Profile (EEP) XML definitions as the primary source of truth. Device behavior, field definitions, and command structures are parsed dynamically from EEP.xml rather than being hard-coded in Python.
+
+**Benefits:**
+- Automatic support for new EEP profiles without code changes
+- Consistent handling across all device types
+- Reduced maintenance burden
+
+### 2. **Configuration Over Code**
+Device-specific adaptations are handled through `eep_platform_mapping.yaml` rather than Python code:
+
+```yaml
+0xD2:
+  0x01:
+    0x12:  # D2-01-12 Profile
+      entities:
+        - component: "light"
+          name: "channel_0"
+          config:
+            channel: 0
+            command_template_on: >-
+              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 100}
+```
+
+**When to use eep_platform_mapping.yaml:**
+- Creating entity types from EEP fields (light, switch, number, select)
+- Defining command templates for actuator control
+- Mapping EEP fields to Home Assistant entity attributes
+- Hiding or categorizing specific fields
+
+**When NOT to modify Python code:**
+- Adding support for a new EEP profile (use YAML mapping)
+- Changing command structure (use command templates)
+- Device-specific tweaks (use entity configuration)
+
+### 3. **Command Templates**
+All actuator commands use Jinja2 templates in YAML configuration:
+
+```yaml
+command_template: >-
+  {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": {{value}}}
+```
+
+The templates are rendered at runtime and converted to proper EEP packets using `RadioPacket.create()`, which handles:
+- Field encoding based on EEP definitions
+- Byte ordering and bit packing
+- Checksum calculation
+
+**Benefits:**
+- No Python code changes for command modifications
+- Easy testing and debugging of commands
+- Consistent packet generation across all device types
+
+### 4. **Minimal Hard-Coding**
+Hard-coded device behavior should only exist when:
+- Platform-specific Home Assistant integration is required (e.g., event firing, state management)
+- Complex multi-step state machines cannot be expressed declaratively
+- Performance-critical operations need optimization
+
+**Examples where hard-coding is necessary:**
+- Event entity `_trigger_event()` method (Home Assistant's event system API)
+- Entity state lifecycle management (Home Assistant's entity base class requirements)
+- Dongle communication layer (serial port handling, packet routing)
+
+**Examples that SHOULD be data-driven (use YAML):**
+- ~~Legacy A5 dimmer support~~ → Can use command templates with brightness variables
+- ~~Device-specific command structures~~ → Use command_template in YAML
+- ~~Field mappings and entity creation~~ → Already handled by EEP.xml + eep_platform_mapping.yaml
+
+**Migration in progress:**
+The integration is actively being refactored to minimize hard-coding. Recent improvements include:
+- Light entities now support command templates (previously hardcoded)
+- Select entities use `_send_message()` with templates (consistent with other platforms)
+- MSC packets properly use RadioPacket.create() infrastructure
+
+### Summary
+```
+EEP.xml (Device Profiles)
+    ↓
+eep_platform_mapping.yaml (Entity Configuration)
+    ↓
+Command Templates (Control Logic)
+    ↓
+Python Code (Generic Infrastructure Only)
+```
+
+This architecture ensures the integration remains maintainable, testable, and easily extensible without requiring Python expertise for most device additions.
+
 ## Installation
 
 ### HACS (Recommended)

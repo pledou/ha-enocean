@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from enocean.protocol.constants import RORG
+from enocean.protocol.packet import RadioPacket
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ID, CONF_NAME
@@ -137,46 +139,72 @@ class EnOceanSwitch(EnOceanEntity, SwitchEntity):
 
     def turn_on(self, **kwargs: Any) -> None:
         """Turn on the switch."""
-        optional = [0x03]
-        optional.extend(self.dev_id)
-        optional.extend([0xFF, 0x00])
-        self.send_command(
-            data=[
-                0xD2,
-                0x01,
-                (self.channel or 0) & 0xFF,
-                0x64,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-            ],
-            optional=optional,
-            packet_type=0x01,
+        # Get dongle base_id for sender
+        enocean_data = self.hass.data.get(DATA_ENOCEAN, {})
+        dongle = enocean_data.get(ENOCEAN_DONGLE)
+        if not dongle:
+            LOGGER.error("Cannot turn on switch %s: dongle unavailable", self.dev_id)
+            return
+        
+        # Use RadioPacket.create() for proper VLD packet construction
+        # This works for D2-01-* profiles (D2-01-01, D2-01-12, etc.)
+        packet = RadioPacket.create(
+            rorg=RORG.VLD,
+            rorg_func=0x01,
+            rorg_type=0x01,  # Use 0x01 as default; profiles share same command structure
+            destination=self.dev_id,
+            sender=dongle.base_id,
+            command=1,  # Actuator Set Output
+            DV=0,  # Switch to new output value (no dimming)
+            IO=(self.channel or 0) & 0xFF,  # I/O channel
+            OV=100  # Output value 100% = ON
         )
+        
+        from homeassistant.helpers.dispatcher import dispatcher_send
+        from .const import SIGNAL_SEND_MESSAGE
+        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet)
+        
+        LOGGER.debug(
+            "Sent turn_on command to %s channel %d",
+            ":".join(f"{b:02x}" for b in self.dev_id),
+            self.channel or 0
+        )
+        
         self._attr_is_on = True
 
     def turn_off(self, **kwargs: Any) -> None:
         """Turn off the switch."""
-        optional = [0x03]
-        optional.extend(self.dev_id)
-        optional.extend([0xFF, 0x00])
-        self.send_command(
-            data=[
-                0xD2,
-                0x01,
-                (self.channel or 0) & 0xFF,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-            ],
-            optional=optional,
-            packet_type=0x01,
+        # Get dongle base_id for sender
+        enocean_data = self.hass.data.get(DATA_ENOCEAN, {})
+        dongle = enocean_data.get(ENOCEAN_DONGLE)
+        if not dongle:
+            LOGGER.error("Cannot turn off switch %s: dongle unavailable", self.dev_id)
+            return
+        
+        # Use RadioPacket.create() for proper VLD packet construction
+        # This works for D2-01-* profiles (D2-01-01, D2-01-12, etc.)
+        packet = RadioPacket.create(
+            rorg=RORG.VLD,
+            rorg_func=0x01,
+            rorg_type=0x01,  # Use 0x01 as default; profiles share same command structure
+            destination=self.dev_id,
+            sender=dongle.base_id,
+            command=1,  # Actuator Set Output
+            DV=0,  # Switch to new output value (no dimming)
+            IO=(self.channel or 0) & 0xFF,  # I/O channel
+            OV=0  # Output value 0% = OFF
         )
+        
+        from homeassistant.helpers.dispatcher import dispatcher_send
+        from .const import SIGNAL_SEND_MESSAGE
+        dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet)
+        
+        LOGGER.debug(
+            "Sent turn_off command to %s channel %d",
+            ":".join(f"{b:02x}" for b in self.dev_id),
+            self.channel or 0
+        )
+        
         self._attr_is_on = False
 
     @callback
