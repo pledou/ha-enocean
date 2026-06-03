@@ -274,22 +274,57 @@
           config:
             device_class: "connectivity"
         # Configuration fields for timer settings
-        # DT1, DT2, DT3 are dim timers in 0.5s units (0=disabled, 1-255=0.5-127.5 seconds)
-        - name: "DT1"
+        # DT1, DT2, DT3 are dim timers: users set seconds, converted to 0.5s units for device
+        # Explicitly configured as number to prevent auto-generation as select with 255 options
+        - component: "number"
+          name: "DT1"
           config:
             entity_category: "config"
+            min_value: 0
+            max_value: 127.5
+            step: 0.5
+            unit: "s"
+            icon: "mdi:timer-cog"
             command_template: >-
-              {"CMD": 2, "IO": 0, "DT1": "{value}"}
-        - name: "DT2"
+              {"CMD": 2, "IO": 0, "DT1": {{(value * 2) | int}}}
+        - component: "number"
+          name: "DT2"
           config:
             entity_category: "config"
+            min_value: 0
+            max_value: 127.5
+            step: 0.5
+            unit: "s"
+            icon: "mdi:timer-cog"
             command_template: >-
-              {"CMD": 2, "IO": 0, "DT2": "{value}"}
-        - name: "DT3"
+              {"CMD": 2, "IO": 0, "DT2": {{(value * 2) | int}}}
+        - component: "number"
+          name: "DT3"
           config:
             entity_category: "config"
+            min_value: 0
+            max_value: 127.5
+            step: 0.5
+            unit: "s"
+            icon: "mdi:timer-cog"
             command_template: >-
-              {"CMD": 2, "IO": 0, "DT3": "{value}"}
+              {"CMD": 2, "IO": 0, "DT3": {{(value * 2) | int}}}
+        # Override AOT/DOT auto-generation: convert from select (65k+ options) to hidden number
+        # Users interact with custom preset select + custom number entities instead
+        - name: "AOT"
+          component: "number"
+          config:
+            entity_category: "diagnostic"  # Hidden from main UI
+            min_value: 0
+            max_value: 65535
+            unit: "s"
+        - name: "DOT"
+          component: "number"
+          config:
+            entity_category: "diagnostic"  # Hidden from main UI
+            min_value: 0
+            max_value: 65535
+            unit: "s"
         # AOT (Auto Off Timer) - User-friendly split configuration
         # Select for common presets + special values, Number for custom values
         - component: "select"
@@ -472,43 +507,6 @@
             max_value: 65534
             unit: "s"
             icon: "mdi:timer-edit"
-            command_template: >-
-              {"CMD": 11, "IO": 1, "DOT": {value}}
-        # AOT and DOT are timer settings in seconds (0=disabled, 1-65534=seconds, 65535=don't modify)
-        - component: "number"
-          name: "AOT_ch0"
-          config:
-            entity_category: "config"
-            min_value: 0
-            max_value: 65535
-            unit: "s"
-            command_template: >-
-              {"CMD": 11, "IO": 0, "AOT": {value}}
-        - component: "number"
-          name: "DOT_ch0"
-          config:
-            entity_category: "config"
-            min_value: 0
-            max_value: 65535
-            unit: "s"
-            command_template: >-
-              {"CMD": 11, "IO": 0, "DOT": {value}}
-        - component: "number"
-          name: "AOT_ch1"
-          config:
-            entity_category: "config"
-            min_value: 0
-            max_value: 65535
-            unit: "s"
-            command_template: >-
-              {"CMD": 11, "IO": 1, "AOT": {value}}
-        - component: "number"
-          name: "DOT_ch1"
-          config:
-            entity_category: "config"
-            min_value: 0
-            max_value: 65535
-            unit: "s"
             command_template: >-
               {"CMD": 11, "IO": 1, "DOT": {value}}
 # Template-specific overrides can be added here (e.g., D2/0x12 for lights)
