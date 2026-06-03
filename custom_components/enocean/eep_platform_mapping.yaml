@@ -234,6 +234,283 @@
             payload_off: "off"
             value_template: >-
               {% if value_parsed.LC == 1 %}on{% else %}off{% endif %}
+    0x12:
+      # D2-01-12: Slot-in Module with 2 channels
+      # Adapted for native EnOcean integration (NOT MQTT)
+      device_config:
+        command: "CMD"
+        channel: "IO"
+        log_learn: ""
+        direction: ""
+        answer: ""
+      entities:
+        # Channel 0 light
+        - component: "light"
+          name: "channel_0"
+          config:
+            channel: 0  # Critical: tells light entity which channel to control
+            command_template_on: >-
+              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 100}
+            command_template_off: >-
+              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 0}
+        # Channel 1 light
+        - component: "light"
+          name: "channel_1"
+          config:
+            channel: 1  # Critical: tells light entity which channel to control
+            command_template_on: >-
+              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 100}
+            command_template_off: >-
+              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 0}
+        # Query status button (queries all channels)
+        - component: "button"
+          name: "query_status"
+          config:
+            command_template: >-
+              {"CMD": 3, "IO": 30}
+        # Local control binary sensor (from status response)
+        - component: binary_sensor
+          name: "LC"
+          config:
+            device_class: "connectivity"
+        # Configuration fields for timer settings
+        # DT1, DT2, DT3 are dim timers in 0.5s units (0=disabled, 1-255=0.5-127.5 seconds)
+        - name: "DT1"
+          config:
+            entity_category: "config"
+            command_template: >-
+              {"CMD": 2, "IO": 0, "DT1": "{value}"}
+        - name: "DT2"
+          config:
+            entity_category: "config"
+            command_template: >-
+              {"CMD": 2, "IO": 0, "DT2": "{value}"}
+        - name: "DT3"
+          config:
+            entity_category: "config"
+            command_template: >-
+              {"CMD": 2, "IO": 0, "DT3": "{value}"}
+        # AOT (Auto Off Timer) - User-friendly split configuration
+        # Select for common presets + special values, Number for custom values
+        - component: "select"
+          name: "auto_off_preset_ch0"
+          config:
+            entity_category: "config"
+            icon: "mdi:timer-off"
+            options:
+              - "Disabled"
+              - "5 minutes"
+              - "15 minutes"
+              - "30 minutes"
+              - "1 hour"
+              - "2 hours"
+              - "6 hours"
+              - "12 hours"
+              - "24 hours"
+              - "Keep device setting"
+              - "Custom (use timer value)"
+            command_template: >-
+              {% set values = {
+                "Disabled": 0,
+                "5 minutes": 300,
+                "15 minutes": 900,
+                "30 minutes": 1800,
+                "1 hour": 3600,
+                "2 hours": 7200,
+                "6 hours": 21600,
+                "12 hours": 43200,
+                "24 hours": 86400,
+                "Keep device setting": 65535
+              } %}
+              {% if option in values %}
+              {"CMD": 11, "IO": 0, "AOT": {{ values[option] }}}
+              {% else %}
+              null
+              {% endif %}
+        - component: "number"
+          name: "auto_off_custom_ch0"
+          config:
+            entity_category: "config"
+            min_value: 1
+            max_value: 65534
+            unit: "s"
+            icon: "mdi:timer-edit"
+            command_template: >-
+              {"CMD": 11, "IO": 0, "AOT": {value}}
+        # DOT (Delay OFF Timer) - User-friendly split configuration
+        - component: "select"
+          name: "delay_off_preset_ch0"
+          config:
+            entity_category: "config"
+            icon: "mdi:timer"
+            options:
+              - "Disabled"
+              - "5 minutes"
+              - "15 minutes"
+              - "30 minutes"
+              - "1 hour"
+              - "2 hours"
+              - "6 hours"
+              - "12 hours"
+              - "24 hours"
+              - "Keep device setting"
+              - "Custom (use timer value)"
+            command_template: >-
+              {% set values = {
+                "Disabled": 0,
+                "5 minutes": 300,
+                "15 minutes": 900,
+                "30 minutes": 1800,
+                "1 hour": 3600,
+                "2 hours": 7200,
+                "6 hours": 21600,
+                "12 hours": 43200,
+                "24 hours": 86400,
+                "Keep device setting": 65535
+              } %}
+              {% if option in values %}
+              {"CMD": 11, "IO": 0, "DOT": {{ values[option] }}}
+              {% else %}
+              null
+              {% endif %}
+        - component: "number"
+          name: "delay_off_custom_ch0"
+          config:
+            entity_category: "config"
+            min_value: 1
+            max_value: 65534
+            unit: "s"
+            icon: "mdi:timer-edit"
+            command_template: >-
+              {"CMD": 11, "IO": 0, "DOT": {value}}
+        # Channel 1 timers
+        - component: "select"
+          name: "auto_off_preset_ch1"
+          config:
+            entity_category: "config"
+            icon: "mdi:timer-off"
+            options:
+              - "Disabled"
+              - "5 minutes"
+              - "15 minutes"
+              - "30 minutes"
+              - "1 hour"
+              - "2 hours"
+              - "6 hours"
+              - "12 hours"
+              - "24 hours"
+              - "Keep device setting"
+              - "Custom (use timer value)"
+            command_template: >-
+              {% set values = {
+                "Disabled": 0,
+                "5 minutes": 300,
+                "15 minutes": 900,
+                "30 minutes": 1800,
+                "1 hour": 3600,
+                "2 hours": 7200,
+                "6 hours": 21600,
+                "12 hours": 43200,
+                "24 hours": 86400,
+                "Keep device setting": 65535
+              } %}
+              {% if option in values %}
+              {"CMD": 11, "IO": 1, "AOT": {{ values[option] }}}
+              {% else %}
+              null
+              {% endif %}
+        - component: "number"
+          name: "auto_off_custom_ch1"
+          config:
+            entity_category: "config"
+            min_value: 1
+            max_value: 65534
+            unit: "s"
+            icon: "mdi:timer-edit"
+            command_template: >-
+              {"CMD": 11, "IO": 1, "AOT": {value}}
+        - component: "select"
+          name: "delay_off_preset_ch1"
+          config:
+            entity_category: "config"
+            icon: "mdi:timer"
+            options:
+              - "Disabled"
+              - "5 minutes"
+              - "15 minutes"
+              - "30 minutes"
+              - "1 hour"
+              - "2 hours"
+              - "6 hours"
+              - "12 hours"
+              - "24 hours"
+              - "Keep device setting"
+              - "Custom (use timer value)"
+            command_template: >-
+              {% set values = {
+                "Disabled": 0,
+                "5 minutes": 300,
+                "15 minutes": 900,
+                "30 minutes": 1800,
+                "1 hour": 3600,
+                "2 hours": 7200,
+                "6 hours": 21600,
+                "12 hours": 43200,
+                "24 hours": 86400,
+                "Keep device setting": 65535
+              } %}
+              {% if option in values %}
+              {"CMD": 11, "IO": 1, "DOT": {{ values[option] }}}
+              {% else %}
+              null
+              {% endif %}
+        - component: "number"
+          name: "delay_off_custom_ch1"
+          config:
+            entity_category: "config"
+            min_value: 1
+            max_value: 65534
+            unit: "s"
+            icon: "mdi:timer-edit"
+            command_template: >-
+              {"CMD": 11, "IO": 1, "DOT": {value}}
+        # AOT and DOT are timer settings in seconds (0=disabled, 1-65534=seconds, 65535=don't modify)
+        - component: "number"
+          name: "AOT_ch0"
+          config:
+            entity_category: "config"
+            min_value: 0
+            max_value: 65535
+            unit: "s"
+            command_template: >-
+              {"CMD": 11, "IO": 0, "AOT": {value}}
+        - component: "number"
+          name: "DOT_ch0"
+          config:
+            entity_category: "config"
+            min_value: 0
+            max_value: 65535
+            unit: "s"
+            command_template: >-
+              {"CMD": 11, "IO": 0, "DOT": {value}}
+        - component: "number"
+          name: "AOT_ch1"
+          config:
+            entity_category: "config"
+            min_value: 0
+            max_value: 65535
+            unit: "s"
+            command_template: >-
+              {"CMD": 11, "IO": 1, "AOT": {value}}
+        - component: "number"
+          name: "DOT_ch1"
+          config:
+            entity_category: "config"
+            min_value: 0
+            max_value: 65535
+            unit: "s"
+            command_template: >-
+              {"CMD": 11, "IO": 1, "DOT": {value}}
 # Template-specific overrides can be added here (e.g., D2/0x12 for lights)
 0xF6:
   # F6 (RPS) profiles are now handled dynamically from EEP.xml
