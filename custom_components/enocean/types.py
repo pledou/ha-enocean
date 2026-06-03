@@ -70,4 +70,6 @@ class EEPEntityDef:
     entity_category: EntityCategory | None = None
     value_template: str | None = None
     command_template: str | None = None
+    command_template_on: str | None = None
+    command_template_off: str | None = None
     mode: str | None = None

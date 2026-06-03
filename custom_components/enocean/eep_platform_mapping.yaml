@@ -266,6 +266,7 @@
         - component: "button"
           name: "query_status"
           config:
+            entity_category: "diagnostic"
             command_template: >-
               {"CMD": 3, "IO": 30}
         # Local control binary sensor (from status response)
@@ -314,14 +315,14 @@
         - name: "AOT"
           component: "number"
           config:
-            entity_category: "diagnostic"  # Hidden from main UI
+            entity_category: "config"
             min_value: 0
             max_value: 65535
             unit: "s"
         - name: "DOT"
           component: "number"
           config:
-            entity_category: "diagnostic"  # Hidden from main UI
+            entity_category: "config"
             min_value: 0
             max_value: 65535
             unit: "s"
@@ -509,7 +510,21 @@
             icon: "mdi:timer-edit"
             command_template: >-
               {"CMD": 11, "IO": 1, "DOT": {value}}
-# Template-specific overrides can be added here (e.g., D2/0x12 for lights)
+        # Auto-generated field overrides (from EEP.xml)
+        - name: "DS"
+          config:
+            entity_category: "config"
+        - name: "EBM"
+          config:
+            entity_category: "config"
+        - name: "UN"
+          config:
+            entity_category: "config"
+        - name: "EL"
+          config:
+            entity_category: "diagnostic"
+
+# RPS (F6) profiles are handled dynamically from EEP.xml
 0xF6:
   # F6 (RPS) profiles are now handled dynamically from EEP.xml
   # Event entities are created automatically based on enum fields (R1, R2, WIN, PB, etc.)

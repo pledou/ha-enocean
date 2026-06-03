@@ -271,3 +271,41 @@ class DynamicEnOceanLight(DynamicEnoceanEntity, EnOceanLight):
         else:
             self._attr_color_mode = ColorMode.BRIGHTNESS
             self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+
+    def turn_on(self, **kwargs: Any) -> None:
+        """Turn the light source on."""
+        # If command template is available, use it
+        if hasattr(self, "_command_template_on") and self._command_template_on:
+            template_vars = {}
+            if self.channel is not None:
+                template_vars["channel"] = self.channel
+            self._send_message(
+                command_template=self._command_template_on,
+                template_vars=template_vars,
+                rorg=self._rorg,
+                func=self._rorg_func,
+                type_=self._rorg_type,
+            )
+            self._attr_is_on = True
+        else:
+            # Fallback to parent class implementation
+            super().turn_on(**kwargs)
+
+    def turn_off(self, **kwargs: Any) -> None:
+        """Turn the light source off."""
+        # If command template is available, use it
+        if hasattr(self, "_command_template_off") and self._command_template_off:
+            template_vars = {}
+            if self.channel is not None:
+                template_vars["channel"] = self.channel
+            self._send_message(
+                command_template=self._command_template_off,
+                template_vars=template_vars,
+                rorg=self._rorg,
+                func=self._rorg_func,
+                type_=self._rorg_type,
+            )
+            self._attr_is_on = False
+        else:
+            # Fallback to parent class implementation
+            super().turn_off(**kwargs)
