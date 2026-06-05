@@ -346,11 +346,18 @@ class DynamicEnOceanSwitch(DynamicEnoceanEntity, EnOceanSwitch):
                 or packet.parsed.get("CH")
                 or packet.parsed.get("IO_NUM")
             )
-            out = (
-                packet.parsed.get("OV")
-                or packet.parsed.get("OUT")
-                or packet.parsed.get("OUTPUT")
-            )
+            
+            # Try to get the value from the field matching this switch's data_field
+            # This handles LC (Local Control), OV (Output Value), etc.
+            out = packet.parsed.get(self._data_field)
+            if out is None:
+                # Fallback to common output field names
+                out = (
+                    packet.parsed.get("OV")
+                    or packet.parsed.get("OUT")
+                    or packet.parsed.get("OUTPUT")
+                )
+            
             if isinstance(ch, dict):
                 ch = ch.get("raw_value") or ch.get("value")
             if isinstance(out, dict):

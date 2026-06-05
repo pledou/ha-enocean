@@ -98,7 +98,7 @@ def test_dynamic_light_turn_on_calls_send_message(mock_hass):
         mock_send.assert_called_once()
         call_kwargs = mock_send.call_args[1]
         assert call_kwargs['command_template'] == '{"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 100}'
-        assert call_kwargs['template_vars'] == {'channel': 0}
+        assert call_kwargs['template_vars'] == {}  # No variables - channel hardcoded in template
         assert call_kwargs['rorg'] == 0xD2
         assert call_kwargs['func'] == 0x01
         assert call_kwargs['type_'] == 0x12
@@ -143,7 +143,7 @@ def test_dynamic_light_turn_off_calls_send_message(mock_hass):
         mock_send.assert_called_once()
         call_kwargs = mock_send.call_args[1]
         assert call_kwargs['command_template'] == '{"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 0}'
-        assert call_kwargs['template_vars'] == {'channel': 1}
+        assert call_kwargs['template_vars'] == {}  # No variables - channel hardcoded in template
         assert call_kwargs['rorg'] == 0xD2
         assert call_kwargs['func'] == 0x01
         assert call_kwargs['type_'] == 0x12

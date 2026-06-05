@@ -69,9 +69,12 @@ async def async_setup_entry(
         """Add light entities for a discovered device from EEP profile."""
 
         def _kwargs_factory(ent):
-            # Extract channel from entity config
+            # Extract channel from entity
+            # For YAML-defined entities, channel is stored in offset field
+            if hasattr(ent, "offset") and ent.offset is not None:
+                return {"channel": int(ent.offset)}
+            # Fallback: try dict-style access for backwards compatibility
             if isinstance(ent, dict):
-                # Try to get channel from config dict
                 config = ent.get("config", {})
                 channel = config.get("channel")
                 if channel is not None:
@@ -276,12 +279,9 @@ class DynamicEnOceanLight(DynamicEnoceanEntity, EnOceanLight):
         """Turn the light source on."""
         # If command template is available, use it
         if hasattr(self, "_command_template_on") and self._command_template_on:
-            template_vars = {}
-            if self.channel is not None:
-                template_vars["channel"] = self.channel
             self._send_message(
                 command_template=self._command_template_on,
-                template_vars=template_vars,
+                template_vars={},  # No variables needed - channel is hardcoded in template
                 rorg=self._rorg,
                 func=self._rorg_func,
                 type_=self._rorg_type,
@@ -295,12 +295,9 @@ class DynamicEnOceanLight(DynamicEnoceanEntity, EnOceanLight):
         """Turn the light source off."""
         # If command template is available, use it
         if hasattr(self, "_command_template_off") and self._command_template_off:
-            template_vars = {}
-            if self.channel is not None:
-                template_vars["channel"] = self.channel
             self._send_message(
                 command_template=self._command_template_off,
-                template_vars=template_vars,
+                template_vars={},  # No variables needed - channel is hardcoded in template
                 rorg=self._rorg,
                 func=self._rorg_func,
                 type_=self._rorg_type,

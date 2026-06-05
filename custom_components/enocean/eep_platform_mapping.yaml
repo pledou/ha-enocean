@@ -244,20 +244,12 @@
         direction: ""
         answer: ""
       entities:
-        # Channel 0 light
+        # Channel lights (auto-expands to channel_ch0 and channel_ch1)
         - component: "light"
-          name: "channel_0"
+          name: "channel"
+          description: "Light"
+          channels: [0, 1]
           config:
-            channel: 0  # Critical: tells light entity which channel to control
-            command_template_on: >-
-              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 100}
-            command_template_off: >-
-              {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 0}
-        # Channel 1 light
-        - component: "light"
-          name: "channel_1"
-          config:
-            channel: 1  # Critical: tells light entity which channel to control
             command_template_on: >-
               {"CMD": 1, "DV": 0, "IO": {{channel}}, "OV": 100}
             command_template_off: >-
@@ -269,16 +261,11 @@
             entity_category: "diagnostic"
             command_template: >-
               {"CMD": 3, "IO": 30}
-        # Local control binary sensor (from status response)
-        - component: binary_sensor
-          name: "LC"
-          config:
-            device_class: "connectivity"
-        # Configuration fields for timer settings
+        # Configuration fields for timer settings (Command 2 - Actuator Set Local)
         # DT1, DT2, DT3 are dim timers: users set seconds, converted to 0.5s units for device
-        # Explicitly configured as number to prevent auto-generation as select with 255 options
         - component: "number"
           name: "DT1"
+          channels: [0, 1]
           config:
             entity_category: "config"
             min_value: 0
@@ -287,9 +274,10 @@
             unit: "s"
             icon: "mdi:timer-cog"
             command_template: >-
-              {"CMD": 2, "IO": 0, "DT1": {{(value * 2) | int}}}
+              {"CMD": 2, "IO": {{channel}}, "DT1": {{(value * 2) | int}}}
         - component: "number"
           name: "DT2"
+          channels: [0, 1]
           config:
             entity_category: "config"
             min_value: 0
@@ -298,9 +286,10 @@
             unit: "s"
             icon: "mdi:timer-cog"
             command_template: >-
-              {"CMD": 2, "IO": 0, "DT2": {{(value * 2) | int}}}
+              {"CMD": 2, "IO": {{channel}}, "DT2": {{(value * 2) | int}}}
         - component: "number"
           name: "DT3"
+          channels: [0, 1]
           config:
             entity_category: "config"
             min_value: 0
@@ -309,7 +298,52 @@
             unit: "s"
             icon: "mdi:timer-cog"
             command_template: >-
-              {"CMD": 2, "IO": 0, "DT3": {{(value * 2) | int}}}
+              {"CMD": 2, "IO": {{channel}}, "DT3": {{(value * 2) | int}}}
+        # Default State configuration (Command 2)
+        - component: "select"
+          name: "DS"
+          description: "Default state after power restore"
+          channels: [0, 1]
+          config:
+            entity_category: "config"
+            icon: "mdi:power-settings"
+            options:
+              - "OFF on power restore"
+              - "ON on power restore"
+              - "Remember last state"
+            command_template: >-
+              {% set values = {"OFF on power restore": 0, "ON on power restore": 1, "Remember last state": 2} %}
+              {"CMD": 2, "IO": {{channel}}, "DS": {{ values[option] }}}
+        # Local Control enable/disable (Command 2)
+        - component: "switch"
+          name: "LC"
+          description: "Enable local control (physical button)"
+          channels: [0, 1]
+          config:
+            entity_category: "config"
+            icon: "mdi:gesture-tap"
+            command_template_on: >-
+              {"CMD": 2, "IO": {{channel}}, "LC": 1}
+            command_template_off: >-
+              {"CMD": 2, "IO": {{channel}}, "LC": 0}
+        # External Button Mode configuration (Command 11)
+        - component: "select"
+          name: "EBM"
+          channels: [0, 1]
+          config:
+            entity_category: "config"
+            icon: "mdi:light-switch"
+            command_template: >-
+              {"CMD": 11, "IO": {{channel}}, "EBM": {{value}}}
+        # 2-State Switch configuration (Command 11)
+        - component: "select"
+          name: "SWT"
+          channels: [0, 1]
+          config:
+            entity_category: "config"
+            icon: "mdi:toggle-switch"
+            command_template: >-
+              {"CMD": 11, "IO": {{channel}}, "SWT": {{value}}}
         # Override AOT/DOT auto-generation: convert from select (65k+ options) to hidden number
         # Users interact with custom preset select + custom number entities instead
         - name: "AOT"
@@ -329,7 +363,9 @@
         # AOT (Auto Off Timer) - User-friendly split configuration
         # Select for common presets + special values, Number for custom values
         - component: "select"
-          name: "auto_off_preset_ch0"
+          name: "auto_off_preset"
+          description: "Auto off timer preset"
+          channels: [0, 1]
           config:
             entity_category: "config"
             icon: "mdi:timer-off"
@@ -359,12 +395,14 @@
                 "Keep device setting": 65535
               } %}
               {% if option in values %}
-              {"CMD": 11, "IO": 0, "AOT": {{ values[option] }}}
+              {"CMD": 11, "IO": {{channel}}, "AOT": {{ values[option] }}}
               {% else %}
               null
               {% endif %}
         - component: "number"
-          name: "auto_off_custom_ch0"
+          name: "auto_off_custom"
+          description: "Auto off timer custom value"
+          channels: [0, 1]
           config:
             entity_category: "config"
             min_value: 1
@@ -372,10 +410,12 @@
             unit: "s"
             icon: "mdi:timer-edit"
             command_template: >-
-              {"CMD": 11, "IO": 0, "AOT": {value}}
+              {"CMD": 11, "IO": {{channel}}, "AOT": {{value}}}
         # DOT (Delay OFF Timer) - User-friendly split configuration
         - component: "select"
-          name: "delay_off_preset_ch0"
+          name: "delay_off_preset"
+          description: "Delay off timer preset"
+          channels: [0, 1]
           config:
             entity_category: "config"
             icon: "mdi:timer"
@@ -405,12 +445,14 @@
                 "Keep device setting": 65535
               } %}
               {% if option in values %}
-              {"CMD": 11, "IO": 0, "DOT": {{ values[option] }}}
+              {"CMD": 11, "IO": {{channel}}, "DOT": {{ values[option] }}}
               {% else %}
               null
               {% endif %}
         - component: "number"
-          name: "delay_off_custom_ch0"
+          name: "delay_off_custom"
+          description: "Delay off timer custom value"
+          channels: [0, 1]
           config:
             entity_category: "config"
             min_value: 1
@@ -418,111 +460,36 @@
             unit: "s"
             icon: "mdi:timer-edit"
             command_template: >-
-              {"CMD": 11, "IO": 0, "DOT": {value}}
-        # Channel 1 timers
-        - component: "select"
-          name: "auto_off_preset_ch1"
-          config:
-            entity_category: "config"
-            icon: "mdi:timer-off"
-            options:
-              - "Disabled"
-              - "5 minutes"
-              - "15 minutes"
-              - "30 minutes"
-              - "1 hour"
-              - "2 hours"
-              - "6 hours"
-              - "12 hours"
-              - "24 hours"
-              - "Keep device setting"
-              - "Custom (use timer value)"
-            command_template: >-
-              {% set values = {
-                "Disabled": 0,
-                "5 minutes": 300,
-                "15 minutes": 900,
-                "30 minutes": 1800,
-                "1 hour": 3600,
-                "2 hours": 7200,
-                "6 hours": 21600,
-                "12 hours": 43200,
-                "24 hours": 86400,
-                "Keep device setting": 65535
-              } %}
-              {% if option in values %}
-              {"CMD": 11, "IO": 1, "AOT": {{ values[option] }}}
-              {% else %}
-              null
-              {% endif %}
-        - component: "number"
-          name: "auto_off_custom_ch1"
-          config:
-            entity_category: "config"
-            min_value: 1
-            max_value: 65534
-            unit: "s"
-            icon: "mdi:timer-edit"
-            command_template: >-
-              {"CMD": 11, "IO": 1, "AOT": {value}}
-        - component: "select"
-          name: "delay_off_preset_ch1"
-          config:
-            entity_category: "config"
-            icon: "mdi:timer"
-            options:
-              - "Disabled"
-              - "5 minutes"
-              - "15 minutes"
-              - "30 minutes"
-              - "1 hour"
-              - "2 hours"
-              - "6 hours"
-              - "12 hours"
-              - "24 hours"
-              - "Keep device setting"
-              - "Custom (use timer value)"
-            command_template: >-
-              {% set values = {
-                "Disabled": 0,
-                "5 minutes": 300,
-                "15 minutes": 900,
-                "30 minutes": 1800,
-                "1 hour": 3600,
-                "2 hours": 7200,
-                "6 hours": 21600,
-                "12 hours": 43200,
-                "24 hours": 86400,
-                "Keep device setting": 65535
-              } %}
-              {% if option in values %}
-              {"CMD": 11, "IO": 1, "DOT": {{ values[option] }}}
-              {% else %}
-              null
-              {% endif %}
-        - component: "number"
-          name: "delay_off_custom_ch1"
-          config:
-            entity_category: "config"
-            min_value: 1
-            max_value: 65534
-            unit: "s"
-            icon: "mdi:timer-edit"
-            command_template: >-
-              {"CMD": 11, "IO": 1, "DOT": {value}}
+              {"CMD": 11, "IO": {{channel}}, "DOT": {{value}}}
         # Auto-generated field overrides (from EEP.xml)
+        # Skip auto-generation for fields with per-channel entities defined above
+        - name: "DT1"
+          component: null  # Skip - using DT1_ch0, DT1_ch1 instead
+        - name: "DT2"
+          component: null  # Skip - using DT2_ch0, DT2_ch1 instead
+        - name: "DT3"
+          component: null  # Skip - using DT3_ch0, DT3_ch1 instead
         - name: "DS"
-          config:
-            entity_category: "config"
+          component: null  # Skip - using DS_ch0, DS_ch1 instead
+        - name: "LC"
+          component: null  # Skip - using LC_ch0, LC_ch1 switches (read/write) instead
         - name: "EBM"
-          config:
-            entity_category: "config"
+          component: null  # Skip - using EBM_ch0, EBM_ch1 instead
+        - name: "SWT"
+          component: null  # Skip - using SWT_ch0, SWT_ch1 instead
+        - name: "OC"
+          component: null  # Skip - over current is per-channel, not needed as entity
+        - name: "OV"
+          component: null  # Skip - output value is represented by light state
         - name: "UN"
           config:
             entity_category: "config"
+        # EL (Error Level) - Status response field (Command 4) - read-only diagnostic sensor
         - name: "EL"
+          component: sensor
           config:
             entity_category: "diagnostic"
+            device_class: "enum"
 
 # RPS (F6) profiles are handled dynamically from EEP.xml
 0xF6:
