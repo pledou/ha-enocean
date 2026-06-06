@@ -635,10 +635,10 @@
           name: "TYPCAI"
           config:
             entity_category: "diagnostic"
-        - component: sensor
+        - component: number
           name: "VVENT"
           config:
-            entity_category: "diagnostic"
+            entity_category: "config"
             unit: "m³"
             icon: "mdi:fan"
         - name: "JINST"
