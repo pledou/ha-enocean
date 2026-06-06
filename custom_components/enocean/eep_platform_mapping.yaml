@@ -557,7 +557,7 @@
             command_template: >-
               {"MSC":"1","CMD":"0","TEMPHYD":{{value}},"COMMAND":"1","send":"clear"}
         - component: select
-          name: "TEMPSOL"
+          name: "TEMPCSOLAR"
           config:
             command_template: >-
               {"MSC":"1","CMD":"0","TEMPSOL":{{value}},"COMMAND":"1","send":"clear"}
@@ -569,11 +569,13 @@
           name: "DEBF"
           config:
             entity_category: "config"
-        - name: "BOOS"
+        - component: select
+          name: "BOOS"
           config:
-            command_template: >-
+            command_template: >
               {"MSC":"1","command":"0","BOOST":{{value}}, "COMMAND":"1","send":"clear"}
-        - name: "VAC"
+        - component: select
+          name: "VAC"
           config:
             command_template: >-
               {"MSC":"1","CMD":"0","VACS":{{value}}, "COMMAND":"1","send":"clear"}
