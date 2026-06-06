@@ -635,33 +635,31 @@
           name: "TYPCAI"
           config:
             entity_category: "diagnostic"
-        - component: number
+        - component: sensor
           name: "VVENT"
           config:
-            entity_category: "config"
+            entity_category: "diagnostic"
             unit: "m³"
             icon: "mdi:fan"
-        - name: "JINST"
-          component: null  # Hidden - aggregated in date_installation
-        - name: "MINST"
-          component: null  # Hidden - aggregated in date_installation
-        - name: "AINST"
-          component: null  # Hidden - aggregated in date_installation
         - component: sensor
-          name: "date_installation"
+          name: "JINST"
           description: "Installation date"
           config:
             entity_category: "diagnostic"
             icon: "mdi:calendar"
-            value_template: >
+            value_template: >-
               {% if value_parsed.JINST and value_parsed.MINST and value_parsed.AINST %}
-                {% set year = value_parsed.AINST | int + 2000 %}
+                {% set year = (value_parsed.AINST | int) + 2000 %}
                 {% set month = value_parsed.MINST | int %}
                 {% set day = value_parsed.JINST | int %}
                 {{ '%04d-%02d-%02d' | format(year, month, day) }}
               {% else %}
                 unknown
               {% endif %}
+        - name: "MINST"
+          component: null  # Hidden - aggregated in JINST (date_installation)
+        - name: "AINST"
+          component: null  # Hidden - aggregated in JINST (date_installation)
         - component: select
           name: "MF"
           config:
