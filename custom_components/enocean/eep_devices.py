@@ -709,6 +709,11 @@ def _expand_channel_entities(entity_def: dict, eep_entities: list[EEPEntityDef])
             inherited_config["device_class"] = eep_entity.device_class
         if eep_entity.mode:
             inherited_config["mode"] = eep_entity.mode
+        if eep_entity.enum_options:
+            inherited_config["options"] = eep_entity.enum_options
+        # Store enum_items for value lookup (not a regular config property)
+        if eep_entity.enum_items:
+            inherited_config["_enum_items"] = eep_entity.enum_items
 
     # Expand into one entity per channel
     expanded = []
@@ -728,9 +733,16 @@ def _expand_channel_entities(entity_def: dict, eep_entities: list[EEPEntityDef])
         if "config" not in channel_entity:
             channel_entity["config"] = {}
         
+        # Check if YAML specifies its own options
+        yaml_has_options = "options" in channel_entity["config"]
+        
         # Apply inherited properties first, then YAML overrides them
         for key, value in inherited_config.items():
             if key not in channel_entity["config"]:
+                # Special case: Don't inherit enum_items if YAML overrides options
+                # because the inherited enum_items won't match the YAML options
+                if key == "_enum_items" and yaml_has_options:
+                    continue
                 channel_entity["config"][key] = value
         
         # Store channel number for offset field
@@ -787,9 +799,18 @@ def _overlay_mapping_overrides(
 
     Returns: Updated entities list with mapping overrides applied and new mapping-only entities added.
     """
+    # Track base entity names that have channels attribute (to skip their EEP.xml counterparts)
+    entities_with_channels = set()
+    
     # Expand entities with 'channels' attribute before processing
     expanded_entities = []
     for entity_def in type_entry.get("entities", []):
+        # Track if this entity uses channel expansion
+        if entity_def.get("channels") is not None:
+            base_name = entity_def.get("name")
+            if base_name:
+                entities_with_channels.add(base_name)
+        
         expanded = _expand_channel_entities(entity_def, eep_entities)
         expanded_entities.extend(expanded)
     
@@ -802,14 +823,34 @@ def _overlay_mapping_overrides(
 
     # Track which mapping entities were matched
     matched_mapping_names = set()
+    
+    # Track entities to skip (component: null in mapping OR has channel expansion)
+    entities_to_skip = entities_with_channels.copy()
 
     # Apply overrides to matching EEP entities
     for eep_entity in eep_entities:
         data_field = eep_entity.data_field
         if data_field in mapping_lookup:
             mapping_def = mapping_lookup[data_field]
-            _apply_mapping_to_entity(mapping_def, eep_entity, data_field)
+            # Check if this entity should be skipped (component: null)
+            if mapping_def.get("component") is None:
+                entities_to_skip.add(data_field)
+                _LOGGER.debug(
+                    "Skipping auto-generated entity %s (component: null in mapping)",
+                    data_field,
+                )
+            else:
+                _apply_mapping_to_entity(mapping_def, eep_entity, data_field)
             matched_mapping_names.add(data_field)
+        elif data_field in entities_with_channels:
+            # Base entity has channel expansion, so skip the EEP.xml base entity
+            _LOGGER.debug(
+                "Skipping auto-generated entity %s (has channel expansion in mapping)",
+                data_field,
+            )
+    
+    # Filter out skipped entities
+    eep_entities = [e for e in eep_entities if e.data_field not in entities_to_skip]
 
     # Create new entities for mapping-only definitions (not in EEP.xml)
     for name, mapping_def in mapping_lookup.items():
@@ -895,6 +936,10 @@ def _create_entity_from_mapping(
 
     if config.get("options"):
         entity.enum_options = config["options"]
+    
+    # Handle enum_items if inherited from EEP (stored with _ prefix to distinguish from regular config)
+    if config.get("_enum_items"):
+        entity.enum_items = config["_enum_items"]
 
     if config.get("value_template"):
         entity.value_template = config["value_template"]

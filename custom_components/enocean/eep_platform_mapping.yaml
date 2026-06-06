@@ -462,21 +462,8 @@
             command_template: >-
               {"CMD": 11, "IO": {{channel}}, "DOT": {{value}}}
         # Auto-generated field overrides (from EEP.xml)
-        # Skip auto-generation for fields with per-channel entities defined above
-        - name: "DT1"
-          component: null  # Skip - using DT1_ch0, DT1_ch1 instead
-        - name: "DT2"
-          component: null  # Skip - using DT2_ch0, DT2_ch1 instead
-        - name: "DT3"
-          component: null  # Skip - using DT3_ch0, DT3_ch1 instead
-        - name: "DS"
-          component: null  # Skip - using DS_ch0, DS_ch1 instead
-        - name: "LC"
-          component: null  # Skip - using LC_ch0, LC_ch1 switches (read/write) instead
-        - name: "EBM"
-          component: null  # Skip - using EBM_ch0, EBM_ch1 instead
-        - name: "SWT"
-          component: null  # Skip - using SWT_ch0, SWT_ch1 instead
+        # Skip auto-generation for fields that don't need entities
+        # Note: Fields with 'channels' attribute automatically skip their base EEP entity
         - name: "OC"
           component: null  # Skip - over current is per-channel, not needed as entity
         - name: "OV"
