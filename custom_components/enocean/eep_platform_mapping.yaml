@@ -638,28 +638,24 @@
         - component: sensor
           name: "VVENT"
           config:
-            entity_category: "diagnostic"
+            entity_category: "config"
             unit: "m³"
             icon: "mdi:fan"
         - component: sensor
           name: "JINST"
-          description: "Installation date"
+          description: "Installation day"
           config:
             entity_category: "diagnostic"
-            icon: "mdi:calendar"
-            value_template: >-
-              {% if value_parsed.JINST and value_parsed.MINST and value_parsed.AINST %}
-                {% set year = (value_parsed.AINST | int) + 2000 %}
-                {% set month = value_parsed.MINST | int %}
-                {% set day = value_parsed.JINST | int %}
-                {{ '%04d-%02d-%02d' | format(year, month, day) }}
-              {% else %}
-                unknown
-              {% endif %}
-        - name: "MINST"
-          component: null  # Hidden - aggregated in JINST (date_installation)
-        - name: "AINST"
-          component: null  # Hidden - aggregated in JINST (date_installation)
+        - component: sensor
+          name: "MINST"
+          description: "Installation month"
+          config:
+            entity_category: "diagnostic"
+        - component: sensor
+          name: "AINST"
+          description: "Installation year (offset from 2000)"
+          config:
+            entity_category: "diagnostic"
         - component: select
           name: "MF"
           config:
