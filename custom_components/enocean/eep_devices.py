@@ -650,6 +650,133 @@ def get_entities_for_device(eep_profile: EepProfile) -> list[EEPEntityDef]:
     return entities
 
 
+def _expand_channel_entities(entity_def: dict, eep_entities: list[EEPEntityDef]) -> list[dict]:
+    """Expand an entity definition with 'channels' attribute into multiple entities.
+
+    If entity_def has a 'channels' attribute (list of channel numbers), this
+    creates one entity definition per channel with:
+    - Name suffixed with '_chX'
+    - Description appended with ' - Channel X'
+    - {{channel}} replaced with actual channel number in templates
+    - Channel number stored in config['channel'] for offset field
+    - Inherits description, min_value, max_value, unit, etc. from EEP.xml if not in YAML
+
+    Args:
+        entity_def: Single entity definition from mapping YAML
+        eep_entities: List of entities extracted from EEP.xml for property lookup
+
+    Returns: List of entity definitions (single item if no channels, multiple if channels present)
+    """
+    channels = entity_def.get("channels")
+
+    # No channels attribute or None - return as-is
+    if channels is None:
+        return [entity_def]
+
+    # Empty list - return no entities
+    if not channels:
+        return []
+
+    # Look up the base entity in EEP.xml by name for property inheritance
+    base_name = entity_def.get("name", "unknown")
+    eep_entity = None
+    for e in eep_entities:
+        if e.data_field == base_name:
+            eep_entity = e
+            break
+    
+    # Determine base description: YAML > EEP.xml > field name
+    if "description" in entity_def:
+        base_description = entity_def["description"]
+    elif eep_entity:
+        base_description = eep_entity.description
+    else:
+        base_description = base_name
+    
+    # Inherit properties from EEP entity if not specified in YAML
+    # Build a config dict with EEP defaults
+    inherited_config = {}
+    if eep_entity:
+        if eep_entity.min_value is not None:
+            inherited_config["min_value"] = eep_entity.min_value
+        if eep_entity.max_value is not None:
+            inherited_config["max_value"] = eep_entity.max_value
+        if eep_entity.unit:
+            inherited_config["unit"] = eep_entity.unit
+        if eep_entity.icon:
+            inherited_config["icon"] = eep_entity.icon
+        if eep_entity.device_class:
+            inherited_config["device_class"] = eep_entity.device_class
+        if eep_entity.mode:
+            inherited_config["mode"] = eep_entity.mode
+        if eep_entity.enum_options:
+            inherited_config["options"] = eep_entity.enum_options
+        # Store enum_items for value lookup (not a regular config property)
+        if eep_entity.enum_items:
+            inherited_config["_enum_items"] = eep_entity.enum_items
+
+    # Expand into one entity per channel
+    expanded = []
+    
+    for channel in channels:
+        # Deep copy the entity definition
+        import copy
+        channel_entity = copy.deepcopy(entity_def)
+        
+        # Update name with channel suffix
+        channel_entity["name"] = f"{base_name}_ch{channel}"
+        
+        # Update description with channel suffix
+        channel_entity["description"] = f"{base_description} - Channel {channel}"
+        
+        # Merge inherited config from EEP with YAML config (YAML takes precedence)
+        if "config" not in channel_entity:
+            channel_entity["config"] = {}
+        
+        # Check if YAML specifies its own options
+        yaml_has_options = "options" in channel_entity["config"]
+        
+        # Apply inherited properties first, then YAML overrides them
+        for key, value in inherited_config.items():
+            if key not in channel_entity["config"]:
+                # Special case: Don't inherit enum_items if YAML overrides options
+                # because the inherited enum_items won't match the YAML options
+                if key == "_enum_items" and yaml_has_options:
+                    continue
+                channel_entity["config"][key] = value
+        
+        # Store channel number for offset field
+        channel_entity["config"]["channel"] = channel
+        
+        # Replace {{channel}} placeholder in templates
+        config = channel_entity["config"]
+        
+        # Handle command_template
+        if "command_template" in config:
+            config["command_template"] = config["command_template"].replace(
+                "{{channel}}", str(channel)
+            )
+        
+        # Handle command_template_on
+        if "command_template_on" in config:
+            config["command_template_on"] = config["command_template_on"].replace(
+                "{{channel}}", str(channel)
+            )
+        
+        # Handle command_template_off
+        if "command_template_off" in config:
+            config["command_template_off"] = config["command_template_off"].replace(
+                "{{channel}}", str(channel)
+            )
+        
+        # Remove the channels attribute from expanded entity
+        channel_entity.pop("channels", None)
+        
+        expanded.append(channel_entity)
+    
+    return expanded
+
+
 def _overlay_mapping_overrides(
     eep_entities: list[EEPEntityDef],
     type_entry: dict,
@@ -672,23 +799,58 @@ def _overlay_mapping_overrides(
 
     Returns: Updated entities list with mapping overrides applied and new mapping-only entities added.
     """
+    # Track base entity names that have channels attribute (to skip their EEP.xml counterparts)
+    entities_with_channels = set()
+    
+    # Expand entities with 'channels' attribute before processing
+    expanded_entities = []
+    for entity_def in type_entry.get("entities", []):
+        # Track if this entity uses channel expansion
+        if entity_def.get("channels") is not None:
+            base_name = entity_def.get("name")
+            if base_name:
+                entities_with_channels.add(base_name)
+        
+        expanded = _expand_channel_entities(entity_def, eep_entities)
+        expanded_entities.extend(expanded)
+    
     # Build lookup of mapping entities by name (data_field)
     mapping_lookup = {}
-    for entity_def in type_entry.get("entities", []):
+    for entity_def in expanded_entities:
         name = entity_def.get("name")
         if name:
             mapping_lookup[name] = entity_def
 
     # Track which mapping entities were matched
     matched_mapping_names = set()
+    
+    # Track entities to skip (component: null in mapping OR has channel expansion)
+    entities_to_skip = entities_with_channels.copy()
 
     # Apply overrides to matching EEP entities
     for eep_entity in eep_entities:
         data_field = eep_entity.data_field
         if data_field in mapping_lookup:
             mapping_def = mapping_lookup[data_field]
-            _apply_mapping_to_entity(mapping_def, eep_entity, data_field)
+            # Check if this entity should be skipped (component: null)
+            if mapping_def.get("component") is None:
+                entities_to_skip.add(data_field)
+                _LOGGER.debug(
+                    "Skipping auto-generated entity %s (component: null in mapping)",
+                    data_field,
+                )
+            else:
+                _apply_mapping_to_entity(mapping_def, eep_entity, data_field)
             matched_mapping_names.add(data_field)
+        elif data_field in entities_with_channels:
+            # Base entity has channel expansion, so skip the EEP.xml base entity
+            _LOGGER.debug(
+                "Skipping auto-generated entity %s (has channel expansion in mapping)",
+                data_field,
+            )
+    
+    # Filter out skipped entities
+    eep_entities = [e for e in eep_entities if e.data_field not in entities_to_skip]
 
     # Create new entities for mapping-only definitions (not in EEP.xml)
     for name, mapping_def in mapping_lookup.items():
@@ -739,8 +901,10 @@ def _create_entity_from_mapping(
         entity_type = EntityType.SENSOR
 
     # Create the entity with mapping values
+    # Use explicit description from mapping, or fall back to field name
+    description = mapping_def.get("description", name)
     entity = EEPEntityDef(
-        description=name,  # Use field name as description
+        description=description,
         rorg=rorg,
         rorg_func=rorg_func,
         rorg_type=rorg_type,
@@ -755,16 +919,27 @@ def _create_entity_from_mapping(
     if config.get("device_class"):
         entity.device_class = config["device_class"]
 
+    # Support both "min"/"max" and "min_value"/"max_value"
     if config.get("min") is not None:
         with contextlib.suppress(ValueError, TypeError):
             entity.min_value = float(config["min"])
+    elif config.get("min_value") is not None:
+        with contextlib.suppress(ValueError, TypeError):
+            entity.min_value = float(config["min_value"])
 
     if config.get("max") is not None:
         with contextlib.suppress(ValueError, TypeError):
             entity.max_value = float(config["max"])
+    elif config.get("max_value") is not None:
+        with contextlib.suppress(ValueError, TypeError):
+            entity.max_value = float(config["max_value"])
 
     if config.get("options"):
         entity.enum_options = config["options"]
+    
+    # Handle enum_items if inherited from EEP (stored with _ prefix to distinguish from regular config)
+    if config.get("_enum_items"):
+        entity.enum_items = config["_enum_items"]
 
     if config.get("value_template"):
         entity.value_template = config["value_template"]
@@ -783,6 +958,12 @@ def _create_entity_from_mapping(
 
     if config.get("command_template"):
         entity.command_template = config["command_template"]
+
+    if config.get("command_template_on"):
+        entity.command_template_on = config["command_template_on"]
+
+    if config.get("command_template_off"):
+        entity.command_template_off = config["command_template_off"]
 
     if config.get("mode"):
         entity.mode = config["mode"]
@@ -814,6 +995,10 @@ def _apply_mapping_to_entity(
         mapping_def.get("component"),
         eep_entity.entity_type,
     )
+
+    # Override description if provided in mapping
+    if mapping_def.get("description"):
+        eep_entity.description = mapping_def["description"]
 
     # Override component/entity type when provided
     if mapping_def.get("component"):
@@ -869,6 +1054,12 @@ def _apply_mapping_to_entity(
 
     if config.get("command_template"):
         eep_entity.command_template = config["command_template"]
+
+    if config.get("command_template_on"):
+        eep_entity.command_template_on = config["command_template_on"]
+
+    if config.get("command_template_off"):
+        eep_entity.command_template_off = config["command_template_off"]
 
     if config.get("mode"):
         eep_entity.mode = config["mode"]

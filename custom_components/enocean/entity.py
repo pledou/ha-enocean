@@ -4,7 +4,8 @@ import inspect
 import json
 from typing import Any, cast
 
-from enocean.protocol.packet import MSCPacket, Packet
+from enocean.protocol.constants import RORG
+from enocean.protocol.packet import MSCPacket, Packet, RadioPacket
 from jinja2 import Template
 
 from homeassistant.core import HomeAssistant, callback
@@ -235,67 +236,94 @@ class EnOceanEntity(Entity):
                 )
 
             else:
-                # Non-MSC packet handling (original logic)
-                # Extract command ID if present
-                cmd = command_data.get("CMD")
-                if cmd is None:
+                # Non-MSC packet handling - use RadioPacket.create for proper EEP encoding
+                # This handles VLD (D2) and other profiles that need proper field encoding
+                
+                # Get sender ID from dongle
+                enocean_data = self.hass.data.get(DATA_ENOCEAN, {})
+                dongle = enocean_data.get(ENOCEAN_DONGLE)
+                if dongle is None:
                     LOGGER.warning(
-                        "No CMD field in command_template output for %s",
+                        "Cannot create packet for %s: dongle unavailable",
                         self._attr_unique_id,
                     )
                     return
 
-                # Build packet data array from command_data
-                # Start with RORG, FUNC, TYPE if provided
-                data = []
+                # Determine RORG from rorg parameter or infer from data
+                packet_rorg = None
                 if rorg is not None:
-                    data.append(rorg & 0xFF)
-                if func is not None:
-                    data.append(func & 0xFF)
-                if type_ is not None:
-                    data.append(type_ & 0xFF)
+                    if rorg == 0xD2:
+                        packet_rorg = RORG.VLD
+                    elif rorg == 0xA5:
+                        packet_rorg = RORG.BS4
+                    elif rorg == 0xF6:
+                        packet_rorg = RORG.RPS
+                    elif rorg == 0xD5:
+                        packet_rorg = RORG.BS1
+                    else:
+                        LOGGER.warning(
+                            "Unknown RORG 0x%02x for %s, using VLD",
+                            rorg,
+                            self._attr_unique_id,
+                        )
+                        packet_rorg = RORG.VLD
+                else:
+                    # Default to VLD if not specified
+                    packet_rorg = RORG.VLD
 
-                # Add CMD
-                data.append(int(cmd) & 0xFF)
+                # Prepare kwargs for RadioPacket.create()
+                # Filter out non-field keys
+                packet_kwargs = {
+                    k: int(v) if not isinstance(v, int) else v
+                    for k, v in command_data.items()
+                    if k not in ("send",)
+                }
 
-                # Add other fields from command_data in order
-                # This is a simplified approach - a full implementation would use EEP field definitions
-                for key, value in command_data.items():
-                    if key not in ("CMD", "send"):
-                        try:
-                            data.append(int(value) & 0xFF)
-                        except (ValueError, TypeError):
-                            LOGGER.debug(
-                                "Skipping non-numeric field %s in command data", key
-                            )
-
-                # Build optional bytes (destination address)
-                optional = [0x03]
-                optional.extend(self.dev_id)
-                optional.extend([0xFF, 0x00])
-
-                LOGGER.info(
-                    "Sending command to %s: packet_type=0x%02x, data=%s (hex: %s), optional=%s (hex: %s), rorg=0x%02x, func=0x%02x, type=0x%02x",
+                LOGGER.debug(
+                    "Creating RadioPacket for %s: rorg=%s, func=0x%02x, type=0x%02x, kwargs=%s",
                     format_device_id_hex(self.dev_id),
-                    0x01,
-                    data,
-                    "".join(f"{b:02x}" for b in data),
-                    optional,
-                    "".join(f"{b:02x}" for b in optional),
-                    rorg or 0,
+                    packet_rorg,
                     func or 0,
                     type_ or 0,
+                    packet_kwargs,
                 )
 
-                # Send the packet
-                self.send_command(data=data, optional=optional, packet_type=0x01)
+                try:
+                    # Create packet using RadioPacket.create with EEP encoding
+                    packet = RadioPacket.create(
+                        rorg=packet_rorg,
+                        rorg_func=func or 0,
+                        rorg_type=type_ or 0,
+                        destination=self.dev_id,
+                        sender=dongle.base_id,
+                        **packet_kwargs,
+                    )
 
-                LOGGER.info(
-                    "Command sent successfully to %s: CMD=%s, total_data_bytes=%d",
-                    format_device_id_hex(self.dev_id),
-                    cmd,
-                    len(data),
-                )
+                    LOGGER.info(
+                        "Sending RadioPacket to %s: rorg=%s, func=0x%02x, type=0x%02x, data=%s (hex: %s)",
+                        format_device_id_hex(self.dev_id),
+                        packet_rorg,
+                        func or 0,
+                        type_ or 0,
+                        packet.data,
+                        "".join(f"{b:02x}" for b in packet.data),
+                    )
+
+                    # Send using dispatcher
+                    dispatcher_send(self.hass, SIGNAL_SEND_MESSAGE, packet)
+
+                    LOGGER.info(
+                        "RadioPacket sent successfully to %s",
+                        format_device_id_hex(self.dev_id),
+                    )
+
+                except Exception as err:
+                    LOGGER.error(
+                        "Failed to create RadioPacket for %s: %s",
+                        self._attr_unique_id,
+                        err,
+                    )
+                    return
 
         except Exception as err:  # noqa: BLE001
             LOGGER.exception(
